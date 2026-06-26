@@ -1,0 +1,177 @@
+@page "/inventario/carga-masiva"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@inject AppDbContext Db
+@inject SesionUsuario Sesion
+@inject ProductoServicio ProdSvc
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Carga Masiva — LocalVenico</PageTitle>
+@if (!Sesion.EstaAutenticado) { Nav.NavigateTo("/login"); return; }
+
+<div class="mb-4">
+    <h2 class="mb-0 fw-bold">Carga Masiva de Productos</h2>
+    <p class="text-muted mb-0">Importa cientos de productos desde un archivo Excel (.xlsx).</p>
+</div>
+
+<div class="row g-4">
+    <!-- Instrucciones -->
+    <div class="col-md-5">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <h6 class="fw-bold mb-3">Instrucciones</h6>
+                <ol class="small text-muted ps-3">
+                    <li class="mb-2">Descarga la <strong>plantilla Excel</strong> con el formato requerido.</li>
+                    <li class="mb-2">Completa los datos: nombre, código de barras (opcional), categoría, precios y stock.</li>
+                    <li class="mb-2">Las categorías deben coincidir exactamente con las registradas en el sistema.</li>
+                    <li class="mb-2">Si un producto ya existe (mismo código de barras), se <strong>actualiza</strong> en lugar de duplicarse.</li>
+                    <li>Sube el archivo y revisa el resultado.</li>
+                </ol>
+
+                <button class="btn btn-outline-primary mt-2" @onclick="DescargarPlantilla" disabled="@_descargando">
+                    @(_descargando ? "Generando..." : "⬇ Descargar plantilla Excel")
+                </button>
+
+                <hr />
+                <h6 class="fw-bold mb-2">Categorías disponibles</h6>
+                <div class="d-flex flex-wrap gap-1">
+                    @foreach (var c in _categorias)
+                    {
+                        <span class="badge bg-secondary-subtle text-secondary border">@c.Nombre</span>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload -->
+    <div class="col-md-7">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <h6 class="fw-bold mb-3">Subir archivo Excel</h6>
+
+                @if (!_procesando && _resultado is null)
+                {
+                    <div class="lv-dropzone @(_arrastrandoArchivo ? "activo" : "")"
+                         @ondragover:preventDefault="true"
+                         @ondragenter="() => _arrastrandoArchivo = true"
+                         @ondragleave="() => _arrastrandoArchivo = false"
+                         @ondrop="AlSoltarArchivo">
+                        <div style="font-size:40px">📂</div>
+                        <div class="fw-semibold mt-2">Arrastra tu archivo aquí</div>
+                        <div class="text-muted small mb-3">o</div>
+                        <InputFile OnChange="AlSeleccionarArchivo" accept=".xlsx" class="d-none" id="fileInput" />
+                        <label for="fileInput" class="btn btn-outline-secondary">Seleccionar archivo .xlsx</label>
+                    </div>
+                }
+
+                @if (_procesando)
+                {
+                    <div class="text-center py-5">
+                        <div class="spinner-border text-primary mb-3"></div>
+                        <div class="fw-semibold">Procesando archivo...</div>
+                        <div class="text-muted small">Esto puede tomar unos segundos.</div>
+                    </div>
+                }
+
+                @if (_resultado is not null)
+                {
+                    <div class="alert @(_resultado.Errores.Any() ? "alert-warning" : "alert-success") mb-3">
+                        <div class="fw-bold mb-1">Importación completada</div>
+                        <div>✅ @_resultado.Insertados productos nuevos insertados</div>
+                        <div>🔄 @_resultado.Actualizados productos actualizados</div>
+                        @if (_resultado.Errores.Any())
+                        {
+                            <div class="mt-2">❌ @_resultado.Errores.Count filas con errores:</div>
+                            <ul class="mb-0 small">
+                                @foreach (var e in _resultado.Errores.Take(10))
+                                {
+                                    <li>@e</li>
+                                }
+                            </ul>
+                        }
+                    </div>
+                    <div class="d-flex gap-2">
+                        <a href="/inventario/productos" class="btn btn-primary">Ver productos</a>
+                        <button class="btn btn-outline-secondary" @onclick="() => _resultado = null">Nueva importación</button>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .lv-dropzone {
+        border: 2px dashed #cbd5e1; border-radius: 10px;
+        padding: 40px 20px; text-align: center;
+        transition: border-color 0.2s, background 0.2s; cursor: pointer;
+    }
+    .lv-dropzone.activo { border-color: #3b82f6; background: #eff6ff; }
+</style>
+
+@code {
+    private List<Categoria> _categorias = [];
+    private bool _procesando = false, _descargando = false, _arrastrandoArchivo = false;
+    private ResultadoImportacion? _resultado;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _categorias = await Db.Categorias.Where(c => c.Activa).OrderBy(c => c.Nombre).ToListAsync();
+    }
+
+    private async Task AlSeleccionarArchivo(InputFileChangeEventArgs e)
+    {
+        await ProcesarArchivo(e.File);
+    }
+
+    private Task AlSoltarArchivo(DragEventArgs e)
+    {
+        _arrastrandoArchivo = false;
+        // Drag-drop con InputFile en Blazor requiere click — informamos al usuario
+        return Task.CompletedTask;
+    }
+
+    private async Task ProcesarArchivo(IBrowserFile archivo)
+    {
+        if (!archivo.Name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _procesando = true;
+        _resultado = null;
+        StateHasChanged();
+
+        try
+        {
+            using var stream = archivo.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024); // 10 MB
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            ms.Position = 0;
+
+            var (ins, act, errores) = await ProdSvc.ImportarDesdeExcelAsync(ms, Sesion.Usuario!.UsuarioId);
+            _resultado = new(ins, act, errores);
+        }
+        catch (Exception ex)
+        {
+            _resultado = new(0, 0, [$"Error al procesar el archivo: {ex.Message}"]);
+        }
+        finally
+        {
+            _procesando = false;
+        }
+    }
+
+    private async Task DescargarPlantilla()
+    {
+        _descargando = true;
+        var bytes = ProdSvc.GenerarPlantillaExcel();
+        var base64 = Convert.ToBase64String(bytes);
+        await JS.InvokeVoidAsync("eval",
+            $"var a=document.createElement('a');a.href='data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{base64}';a.download='plantilla_productos.xlsx';a.click()");
+        _descargando = false;
+    }
+
+    private record ResultadoImportacion(int Insertados, int Actualizados, List<string> Errores);
+}

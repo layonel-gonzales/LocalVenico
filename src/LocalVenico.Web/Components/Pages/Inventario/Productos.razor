@@ -1,0 +1,334 @@
+@page "/inventario/productos"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@inject AppDbContext Db
+@inject SesionUsuario Sesion
+@inject ProductoServicio ProdSvc
+@inject NavigationManager Nav
+
+<PageTitle>Productos — LocalVenico</PageTitle>
+@if (!Sesion.EstaAutenticado) { Nav.NavigateTo("/login"); return; }
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 fw-bold">Productos</h2>
+    <button class="btn btn-primary" @onclick="AbrirNuevo">+ Nuevo producto</button>
+</div>
+
+<!-- Buscador + escáner -->
+<div class="row g-2 mb-3">
+    <div class="col-md-5">
+        <input @bind="_busqueda" @bind:event="oninput" class="form-control" placeholder="Buscar por nombre..." />
+    </div>
+    <div class="col-md-4">
+        <InputEscaner OnCodigoLeido="BuscarPorCodigo" Placeholder="Escanea código de barras..." AutoFoco="false" />
+    </div>
+    <div class="col-md-3">
+        <select @bind="_filtroCategoria" class="form-select">
+            <option value="0">Todas las categorías</option>
+            @foreach (var c in _categorias)
+            {
+                <option value="@c.CategoriaId">@c.Nombre</option>
+            }
+        </select>
+    </div>
+</div>
+
+@if (_cargando)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else
+{
+    var filtrados = _productos
+        .Where(p => (string.IsNullOrEmpty(_busqueda) || p.Nombre.Contains(_busqueda, StringComparison.OrdinalIgnoreCase))
+                 && (_filtroCategoria == 0 || p.CategoriaId == _filtroCategoria))
+        .ToList();
+
+    <div class="card border-0 shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 small">
+                <thead class="table-light">
+                    <tr>
+                        <th>Código</th>
+                        <th>Nombre</th>
+                        <th>Categoría</th>
+                        <th>P. Venta</th>
+                        <th>Stock</th>
+                        <th>Mín.</th>
+                        <th>Estado</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (!filtrados.Any())
+                    {
+                        <tr><td colspan="8" class="text-center text-muted py-4">No se encontraron productos.</td></tr>
+                    }
+                    @foreach (var p in filtrados)
+                    {
+                        <tr class="@(p.StockBajo ? "table-warning" : "")">
+                            <td class="text-muted">
+                                @(p.CodigoBarras ?? p.CodigoInterno)
+                                @if (!p.TieneCodigoPropio)
+                                {
+                                    <span class="badge bg-secondary ms-1" style="font-size:9px">INT</span>
+                                }
+                            </td>
+                            <td class="fw-semibold">@p.Nombre</td>
+                            <td class="text-muted">@p.Categoria.Nombre</td>
+                            <td>$@p.PrecioVenta.ToString("N0")</td>
+                            <td class="@(p.StockBajo ? "text-danger fw-bold" : "")">
+                                @p.StockActual.ToString("G29") @p.UnidadMedida
+                                @if (p.StockBajo) { <span>⚠</span> }
+                            </td>
+                            <td class="text-muted">@p.StockMinimo.ToString("G29")</td>
+                            <td>
+                                <span class="badge @(p.Activo ? "bg-success-subtle text-success" : "bg-secondary-subtle text-secondary")">
+                                    @(p.Activo ? "Activo" : "Inactivo")
+                                </span>
+                            </td>
+                            <td class="text-end">
+                                <button class="btn btn-sm btn-outline-secondary me-1" @onclick="() => AbrirEditar(p)">Editar</button>
+                                <button class="btn btn-sm @(p.Activo ? "btn-outline-danger" : "btn-outline-success")"
+                                        @onclick="() => ToggleActivo(p)">
+                                    @(p.Activo ? "Desactivar" : "Activar")
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="px-3 py-2 text-muted small border-top">
+            @filtrados.Count productos | @filtrados.Count(p => p.StockBajo) con stock bajo
+        </div>
+    </div>
+}
+
+@if (_modalAbierto)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.4)">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(_editando ? "Editar" : "Nuevo") producto</h5>
+                    <button class="btn-close" @onclick="CerrarModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(_error)) { <div class="alert alert-danger py-2 mb-3">@_error</div> }
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Nombre <span class="text-danger">*</span></label>
+                            <input @bind="_form.Nombre" class="form-control" maxlength="150" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Código de Barras (EAN/UPC)</label>
+                            <div class="input-group">
+                                <InputEscaner OnCodigoLeido="c => { _form.CodigoBarras = c; _form.TieneCodigoPropio = true; StateHasChanged(); }"
+                                              Placeholder="Escanea o escribe..."
+                                              MostrarBotonBuscar="false"
+                                              LimpiarAlLeer="false"
+                                              AutoFoco="false" />
+                            </div>
+                            @if (!string.IsNullOrEmpty(_form.CodigoBarras))
+                            {
+                                <div class="form-text text-success">✓ Código: @_form.CodigoBarras</div>
+                            }
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Categoría <span class="text-danger">*</span></label>
+                            <select @bind="_form.CategoriaId" class="form-select">
+                                <option value="0">— Selecciona —</option>
+                                @foreach (var c in _categorias)
+                                {
+                                    <option value="@c.CategoriaId">@c.Nombre</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Unidad de medida</label>
+                            <select @bind="_form.UnidadMedida" class="form-select">
+                                <option>UN</option>
+                                <option>KG</option>
+                                <option>LT</option>
+                                <option>MT</option>
+                                <option>GR</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Precio Compra</label>
+                            <div class="input-group">
+                                <span class="input-group-text">$</span>
+                                <input @bind="_form.PrecioCompra" type="number" min="0" class="form-control" />
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Precio Venta (IVA inc.) <span class="text-danger">*</span></label>
+                            <div class="input-group">
+                                <span class="input-group-text">$</span>
+                                <input @bind="_form.PrecioVenta" type="number" min="0" class="form-control" />
+                            </div>
+                        </div>
+                        @if (!_editando)
+                        {
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Stock inicial</label>
+                                <input @bind="_form.StockInicial" type="number" min="0" step="0.001" class="form-control" />
+                            </div>
+                        }
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Stock mínimo</label>
+                            <input @bind="_form.StockMinimo" type="number" min="0" step="0.001" class="form-control" />
+                            <div class="form-text">Avisa cuando el stock baje de este valor.</div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Descripción</label>
+                            <textarea @bind="_form.Descripcion" class="form-control" rows="2" maxlength="500"></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CerrarModal">Cancelar</button>
+                    <button class="btn btn-primary" @onclick="Guardar" disabled="@_guardando">
+                        @(_guardando ? "Guardando..." : "Guardar")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Producto> _productos = [];
+    private List<Categoria> _categorias = [];
+    private bool _cargando = true, _modalAbierto = false, _editando = false, _guardando = false;
+    private string _error = string.Empty, _busqueda = string.Empty;
+    private int _filtroCategoria;
+    private ProductoForm _form = new();
+    private int _editandoId;
+
+    protected override async Task OnInitializedAsync() => await Cargar();
+
+    private async Task Cargar()
+    {
+        _cargando = true;
+        _productos = await Db.Productos.Include(p => p.Categoria)
+            .OrderBy(p => p.Nombre).ToListAsync();
+        _categorias = await Db.Categorias.Where(c => c.Activa).OrderBy(c => c.Nombre).ToListAsync();
+        _cargando = false;
+    }
+
+    private async Task BuscarPorCodigo(string codigo)
+    {
+        var p = await ProdSvc.BuscarPorCodigoAsync(codigo);
+        if (p is not null)
+            AbrirEditar(p);
+        else
+            _busqueda = codigo;
+    }
+
+    private async Task AbrirNuevo()
+    {
+        _form = new() { CodigoInterno = await ProdSvc.GenerarCodigoInternoAsync() };
+        _editando = false; _error = string.Empty; _modalAbierto = true;
+    }
+
+    private void AbrirEditar(Producto p)
+    {
+        _form = new()
+        {
+            Nombre = p.Nombre, CodigoBarras = p.CodigoBarras, CodigoInterno = p.CodigoInterno,
+            CategoriaId = p.CategoriaId, UnidadMedida = p.UnidadMedida,
+            PrecioCompra = p.PrecioCompra, PrecioVenta = p.PrecioVenta,
+            StockMinimo = p.StockMinimo, Descripcion = p.Descripcion,
+            TieneCodigoPropio = p.TieneCodigoPropio
+        };
+        _editandoId = p.ProductoId; _editando = true; _error = string.Empty; _modalAbierto = true;
+    }
+
+    private void CerrarModal() => _modalAbierto = false;
+
+    private async Task Guardar()
+    {
+        _error = string.Empty;
+        if (string.IsNullOrWhiteSpace(_form.Nombre)) { _error = "El nombre es obligatorio."; return; }
+        if (_form.CategoriaId == 0) { _error = "Selecciona una categoría."; return; }
+        if (_form.PrecioVenta <= 0) { _error = "El precio de venta debe ser mayor a 0."; return; }
+
+        _guardando = true;
+        try
+        {
+            if (_editando)
+            {
+                var p = await Db.Productos.FindAsync(_editandoId);
+                if (p is not null)
+                {
+                    p.Nombre = _form.Nombre.Trim(); p.CategoriaId = _form.CategoriaId;
+                    p.CodigoBarras = string.IsNullOrEmpty(_form.CodigoBarras) ? null : _form.CodigoBarras.Trim();
+                    p.UnidadMedida = _form.UnidadMedida; p.PrecioCompra = _form.PrecioCompra;
+                    p.PrecioVenta = _form.PrecioVenta; p.StockMinimo = _form.StockMinimo;
+                    p.Descripcion = _form.Descripcion; p.TieneCodigoPropio = _form.TieneCodigoPropio;
+                    p.ActualizadoEn = DateTime.Now;
+                }
+                await Db.SaveChangesAsync();
+            }
+            else
+            {
+                var codigoInterno = string.IsNullOrEmpty(_form.CodigoBarras)
+                    ? _form.CodigoInterno
+                    : $"INT-{(await Db.Productos.CountAsync()) + 1:D5}";
+
+                var prod = new Producto
+                {
+                    Nombre = _form.Nombre.Trim(), CategoriaId = _form.CategoriaId,
+                    CodigoBarras = string.IsNullOrEmpty(_form.CodigoBarras) ? null : _form.CodigoBarras.Trim(),
+                    CodigoInterno = codigoInterno,
+                    UnidadMedida = _form.UnidadMedida, PrecioCompra = _form.PrecioCompra,
+                    PrecioVenta = _form.PrecioVenta, StockActual = _form.StockInicial,
+                    StockMinimo = _form.StockMinimo, Descripcion = _form.Descripcion,
+                    TieneCodigoPropio = _form.TieneCodigoPropio
+                };
+                Db.Productos.Add(prod);
+                await Db.SaveChangesAsync();
+
+                if (_form.StockInicial > 0)
+                {
+                    Db.StockMovimientos.Add(new StockMovimiento
+                    {
+                        ProductoId = prod.ProductoId, UsuarioId = Sesion.Usuario!.UsuarioId,
+                        Tipo = "ENTRADA", Cantidad = _form.StockInicial,
+                        StockAntes = 0, StockDespues = _form.StockInicial,
+                        Motivo = "Stock inicial al registrar producto"
+                    });
+                    await Db.SaveChangesAsync();
+                }
+            }
+
+            _modalAbierto = false;
+            await Cargar();
+        }
+        catch (Exception ex) when (ex.InnerException?.Message.Contains("UNIQUE") == true)
+        {
+            _error = "El código de barras ya está registrado en otro producto.";
+        }
+        catch { _error = "Error al guardar el producto."; }
+        finally { _guardando = false; }
+    }
+
+    private async Task ToggleActivo(Producto p) { p.Activo = !p.Activo; await Db.SaveChangesAsync(); }
+
+    private class ProductoForm
+    {
+        public string Nombre { get; set; } = string.Empty;
+        public string? CodigoBarras { get; set; }
+        public string CodigoInterno { get; set; } = string.Empty;
+        public int CategoriaId { get; set; }
+        public string UnidadMedida { get; set; } = "UN";
+        public decimal PrecioCompra { get; set; }
+        public decimal PrecioVenta { get; set; }
+        public decimal StockInicial { get; set; }
+        public decimal StockMinimo { get; set; }
+        public string? Descripcion { get; set; }
+        public bool TieneCodigoPropio { get; set; }
+    }
+}

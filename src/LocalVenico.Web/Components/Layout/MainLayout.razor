@@ -1,0 +1,188 @@
+@inherits LayoutComponentBase
+@using LocalVenico.Web.Servicios
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+@using Microsoft.EntityFrameworkCore
+@inject SesionUsuario Sesion
+@inject NavigationManager Nav
+@inject ProtectedSessionStorage Storage
+@inject AppDbContext Db
+
+@if (_restaurando)
+{
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f1f5f9">
+        <div class="spinner-border text-primary"></div>
+    </div>
+}
+else if (!Sesion.EstaAutenticado)
+{
+    @Body
+}
+else
+{
+    <div class="lv-shell">
+        <!-- Sidebar -->
+        <nav class="lv-sidebar @(_sidebarAbierto ? "abierto" : "")">
+            <div class="lv-sidebar-header">
+                <span class="lv-logo">
+                    <span class="lv-logo-icon">🏪</span>
+                    LocalVenico
+                </span>
+                <button class="lv-toggle-btn d-md-none" @onclick="ToggleSidebar">✕</button>
+            </div>
+            <div class="px-3 py-2" style="font-size:11px;color:#5D6678">Gestión de Almacén</div>
+
+            <div class="lv-nav-section">
+                <div class="lv-nav-label">Principal</div>
+                <NavLink class="lv-nav-item" href="/" Match="NavLinkMatch.All">
+                    <span class="lv-nav-icon">📊</span> Dashboard
+                </NavLink>
+            </div>
+
+            <div class="lv-nav-section">
+                <div class="lv-nav-label">Punto de Venta</div>
+                <NavLink class="lv-nav-item" href="/venta">
+                    <span class="lv-nav-icon">🛒</span> Nueva Venta
+                </NavLink>
+                <NavLink class="lv-nav-item" href="/venta/anulacion">
+                    <span class="lv-nav-icon">↩</span> Anular Venta
+                </NavLink>
+                <NavLink class="lv-nav-item" href="/venta/cierre-caja">
+                    <span class="lv-nav-icon">🏁</span> Cierre de Caja
+                </NavLink>
+            </div>
+
+            <div class="lv-nav-section">
+                <div class="lv-nav-label">Inventario</div>
+                <NavLink class="lv-nav-item" href="/inventario/productos">
+                    <span class="lv-nav-icon">📦</span> Productos
+                </NavLink>
+                <NavLink class="lv-nav-item" href="/inventario/categorias">
+                    <span class="lv-nav-icon">🗂</span> Categorías
+                </NavLink>
+                <NavLink class="lv-nav-item" href="/inventario/ajuste-stock">
+                    <span class="lv-nav-icon">⚖</span> Ajuste de Stock
+                </NavLink>
+                <NavLink class="lv-nav-item" href="/inventario/movimientos">
+                    <span class="lv-nav-icon">📋</span> Movimientos
+                </NavLink>
+                <NavLink class="lv-nav-item" href="/inventario/carga-masiva">
+                    <span class="lv-nav-icon">📥</span> Carga Masiva
+                </NavLink>
+                <NavLink class="lv-nav-item" href="/inventario/alertas">
+                    <span class="lv-nav-icon">⚠</span> Alertas Stock
+                </NavLink>
+            </div>
+
+            <div class="lv-nav-section">
+                <div class="lv-nav-label">Compras</div>
+                <NavLink class="lv-nav-item" href="/compras/proveedores">
+                    <span class="lv-nav-icon">🚛</span> Proveedores
+                </NavLink>
+                <NavLink class="lv-nav-item" href="/compras/ordenes">
+                    <span class="lv-nav-icon">📝</span> Órdenes de Compra
+                </NavLink>
+            </div>
+
+            @if (Sesion.EsAdmin)
+            {
+                <div class="lv-nav-section">
+                    <div class="lv-nav-label">Administración</div>
+                    <NavLink class="lv-nav-item" href="/admin/usuarios">
+                        <span class="lv-nav-icon">👥</span> Usuarios
+                    </NavLink>
+                    <NavLink class="lv-nav-item" href="/admin/roles">
+                        <span class="lv-nav-icon">🔐</span> Roles
+                    </NavLink>
+                    <NavLink class="lv-nav-item" href="/configuracion/empresa">
+                        <span class="lv-nav-icon">🏪</span> Empresa
+                    </NavLink>
+                    <NavLink class="lv-nav-item" href="/configuracion/medios-pago">
+                        <span class="lv-nav-icon">💳</span> Medios de Pago
+                    </NavLink>
+                    <NavLink class="lv-nav-item" href="/configuracion/impresora">
+                        <span class="lv-nav-icon">🖨</span> Impresora
+                    </NavLink>
+                </div>
+            }
+        </nav>
+
+        <!-- Contenido principal -->
+        <div class="lv-main">
+            <header class="lv-topbar">
+                <button class="lv-toggle-btn d-md-none" @onclick="ToggleSidebar">☰</button>
+                <div class="lv-topbar-search">
+                    <input type="text" placeholder="Buscar producto, venta o código…" disabled />
+                </div>
+                <div class="lv-topbar-right">
+                    <button class="lv-notification-btn" title="Notificaciones">
+                        🔔
+                        @if (_alertasStock > 0) { <span class="lv-notification-dot"></span> }
+                    </button>
+                    <div class="lv-user-avatar">@_iniciales</div>
+                    <div>
+                        <div class="lv-user-name">@Sesion.Usuario!.NombreCompleto</div>
+                        <div class="lv-user-role">@Sesion.Usuario.Rol.Nombre</div>
+                    </div>
+                    <button class="lv-notification-btn" title="Cerrar sesión" @onclick="async () => await CerrarSesion()">
+                        🚪
+                    </button>
+                </div>
+            </header>
+
+            <main class="lv-content">
+                @Body
+            </main>
+        </div>
+    </div>
+}
+
+<div id="blazor-error-ui" data-nosnippet>
+    Se produjo un error inesperado.
+    <a href="." class="reload">Recargar</a>
+    <span class="dismiss">✕</span>
+</div>
+
+@code {
+    private bool _sidebarAbierto = false;
+    private bool _restaurando = true;
+    private int _alertasStock;
+    private string _iniciales = "";
+
+    protected override void OnInitialized()
+    {
+        Sesion.OnCambio += StateHasChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            if (!Sesion.EstaAutenticado)
+            {
+                var restaurado = await Sesion.IntentarRestaurarAsync(Storage, Db);
+                if (!restaurado && Nav.Uri != Nav.BaseUri + "login" && Nav.Uri != Nav.BaseUri + "setup")
+                    Nav.NavigateTo("/login");
+            }
+            if (Sesion.EstaAutenticado)
+            {
+                var nombre = Sesion.Usuario!.NombreCompleto ?? "";
+                var partes = nombre.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                _iniciales = partes.Length >= 2
+                    ? $"{partes[0][0]}{partes[1][0]}".ToUpper()
+                    : (partes.Length == 1 ? partes[0][..Math.Min(2, partes[0].Length)].ToUpper() : "?");
+                _alertasStock = await Db.Productos.CountAsync(p => p.Activo && p.StockActual < p.StockMinimo);
+            }
+            _restaurando = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleSidebar() => _sidebarAbierto = !_sidebarAbierto;
+
+    private async Task CerrarSesion()
+    {
+        await Sesion.LimpiarStorageAsync(Storage);
+        Sesion.CerrarSesion();
+        Nav.NavigateTo("/login", forceLoad: true);
+    }
+}

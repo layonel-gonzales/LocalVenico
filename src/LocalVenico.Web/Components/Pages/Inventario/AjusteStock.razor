@@ -1,0 +1,261 @@
+@page "/inventario/ajuste-stock"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@inject AppDbContext Db
+@inject SesionUsuario Sesion
+@inject ProductoServicio ProdSvc
+@inject NavigationManager Nav
+
+<PageTitle>Ajuste de Stock — LocalVenico</PageTitle>
+@if (!Sesion.EstaAutenticado) { Nav.NavigateTo("/login"); return; }
+
+<div class="mb-4">
+    <h2 class="mb-0 fw-bold">Ajuste de Stock</h2>
+    <p class="text-muted mb-0">Registra entradas, salidas o correcciones manuales de inventario.</p>
+</div>
+
+<div class="row g-4">
+    <!-- Panel izquierdo: buscar producto -->
+    <div class="col-md-5">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <h6 class="fw-bold mb-3">1. Buscar producto</h6>
+                <InputEscaner OnCodigoLeido="BuscarProducto" Placeholder="Escanea o escribe el código..." />
+                <div class="mt-3">
+                    <input @bind="_busquedaNombre" class="form-control"
+                           placeholder="O busca por nombre..." @oninput="BuscarPorNombre" />
+                </div>
+
+                @if (_sugerencias.Any())
+                {
+                    <div class="list-group mt-2" style="max-height:200px;overflow-y:auto">
+                        @foreach (var s in _sugerencias)
+                        {
+                            <button class="list-group-item list-group-item-action py-2" @onclick="() => SeleccionarProducto(s)">
+                                <div class="fw-semibold">@s.Nombre</div>
+                                <div class="text-muted small">@(s.CodigoBarras ?? s.CodigoInterno) · Stock: @s.StockActual @s.UnidadMedida</div>
+                            </button>
+                        }
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(_errorBusqueda))
+                {
+                    <div class="alert alert-warning py-2 mt-2">@_errorBusqueda</div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- Panel derecho: formulario ajuste -->
+    <div class="col-md-7">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <h6 class="fw-bold mb-3">2. Registrar ajuste</h6>
+
+                @if (_producto is null)
+                {
+                    <div class="text-center text-muted py-4">
+                        <div style="font-size:40px">📦</div>
+                        <div>Busca un producto para ajustar su stock</div>
+                    </div>
+                }
+                else
+                {
+                    <!-- Info producto seleccionado -->
+                    <div class="p-3 mb-3 rounded" style="background:#f8fafc;border:1px solid #e2e8f0">
+                        <div class="fw-bold">@_producto.Nombre</div>
+                        <div class="text-muted small">@((_producto.CodigoBarras ?? _producto.CodigoInterno)) · @_producto.Categoria.Nombre</div>
+                        <div class="mt-1">
+                            Stock actual:
+                            <span class="fw-bold @(_producto.StockBajo ? "text-danger" : "text-success")">
+                                @_producto.StockActual @_producto.UnidadMedida
+                            </span>
+                            @if (_producto.StockBajo) { <span class="badge bg-danger ms-1">Bajo mínimo</span> }
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(_error)) { <div class="alert alert-danger py-2 mb-3">@_error</div> }
+                    @if (!string.IsNullOrEmpty(_exito)) { <div class="alert alert-success py-2 mb-3">@_exito</div> }
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Tipo de ajuste <span class="text-danger">*</span></label>
+                            <select @bind="_tipoAjuste" class="form-select">
+                                <option value="ENTRADA">Entrada (+) — compra, devolución</option>
+                                <option value="SALIDA">Salida (−) — merma, retiro</option>
+                                <option value="AJUSTE">Corrección — inventario físico</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">
+                                @(_tipoAjuste == "AJUSTE" ? "Nuevo stock total" : "Cantidad") <span class="text-danger">*</span>
+                            </label>
+                            <div class="input-group">
+                                @if (_tipoAjuste == "ENTRADA") { <span class="input-group-text text-success fw-bold">+</span> }
+                                @if (_tipoAjuste == "SALIDA")  { <span class="input-group-text text-danger fw-bold">−</span> }
+                                <input @bind="_cantidad" type="number" min="0" step="0.001" class="form-control" />
+                                <span class="input-group-text">@_producto.UnidadMedida</span>
+                            </div>
+                            @if (_tipoAjuste == "AJUSTE")
+                            {
+                                <div class="form-text">
+                                    Diferencia: @((_cantidad - _producto.StockActual) >= 0 ? "+" : "")@((_cantidad - _producto.StockActual).ToString("G29"))
+                                </div>
+                            }
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Motivo <span class="text-danger">*</span></label>
+                            <textarea @bind="_motivo" class="form-control" rows="2" maxlength="300"
+                                      placeholder="ej: Merma por vencimiento, Inventario físico mensual..."></textarea>
+                        </div>
+                        <div class="col-12">
+                            <button class="btn btn-primary px-4" @onclick="RegistrarAjuste" disabled="@_guardando">
+                                @(_guardando ? "Guardando..." : "Registrar ajuste")
+                            </button>
+                            <button class="btn btn-outline-secondary ms-2" @onclick="LimpiarFormulario">Limpiar</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Últimos ajustes del día -->
+<div class="mt-4">
+    <h5 class="fw-bold mb-3">Ajustes de hoy</h5>
+    @if (_movimientosHoy.Any())
+    {
+        <div class="card border-0 shadow-sm">
+            <div class="table-responsive">
+                <table class="table table-sm mb-0 small">
+                    <thead class="table-light">
+                        <tr><th>Hora</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Stock resultante</th><th>Motivo</th><th>Usuario</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var m in _movimientosHoy)
+                        {
+                            <tr>
+                                <td class="text-muted">@m.CreadoEn.ToString("HH:mm")</td>
+                                <td class="fw-semibold">@m.Producto.Nombre</td>
+                                <td><span class="badge @BadgeTipo(m.Tipo)">@m.Tipo</span></td>
+                                <td class="@(m.Cantidad >= 0 ? "text-success" : "text-danger") fw-bold">
+                                    @(m.Cantidad >= 0 ? "+" : "")@m.Cantidad
+                                </td>
+                                <td>@m.StockDespues</td>
+                                <td class="text-muted">@m.Motivo</td>
+                                <td class="text-muted">@m.Usuario.NombreCompleto</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+    else
+    {
+        <p class="text-muted">Sin ajustes registrados hoy.</p>
+    }
+</div>
+
+@code {
+    private Producto? _producto;
+    private List<Producto> _sugerencias = [];
+    private List<StockMovimiento> _movimientosHoy = [];
+    private string _tipoAjuste = "ENTRADA";
+    private decimal _cantidad;
+    private string _motivo = string.Empty;
+    private string _error = string.Empty, _exito = string.Empty, _errorBusqueda = string.Empty;
+    private string _busquedaNombre = string.Empty;
+    private bool _guardando;
+
+    protected override async Task OnInitializedAsync() => await CargarMovimientosHoy();
+
+    private async Task CargarMovimientosHoy()
+    {
+        _movimientosHoy = await Db.StockMovimientos
+            .Include(m => m.Producto)
+            .Include(m => m.Usuario)
+            .Where(m => m.CreadoEn.Date == DateTime.Today && m.Tipo != "VENTA" && m.Tipo != "COMPRA")
+            .OrderByDescending(m => m.CreadoEn)
+            .Take(20)
+            .ToListAsync();
+    }
+
+    private async Task BuscarProducto(string codigo)
+    {
+        _errorBusqueda = string.Empty;
+        var p = await ProdSvc.BuscarPorCodigoAsync(codigo);
+        if (p is null) { _errorBusqueda = $"No se encontró producto con código: {codigo}"; return; }
+        SeleccionarProducto(p);
+    }
+
+    private async Task BuscarPorNombre(ChangeEventArgs e)
+    {
+        var texto = e.Value?.ToString() ?? string.Empty;
+        if (texto.Length < 2) { _sugerencias.Clear(); return; }
+        _sugerencias = await Db.Productos
+            .Include(p => p.Categoria)
+            .Where(p => p.Activo && p.Nombre.Contains(texto))
+            .Take(6).ToListAsync();
+    }
+
+    private void SeleccionarProducto(Producto p)
+    {
+        _producto = p; _sugerencias.Clear(); _busquedaNombre = string.Empty;
+        _cantidad = _tipoAjuste == "AJUSTE" ? p.StockActual : 0;
+        _error = string.Empty; _exito = string.Empty;
+    }
+
+    private async Task RegistrarAjuste()
+    {
+        _error = string.Empty; _exito = string.Empty;
+        if (_producto is null) return;
+        if (_cantidad <= 0 && _tipoAjuste != "AJUSTE") { _error = "La cantidad debe ser mayor a 0."; return; }
+        if (string.IsNullOrWhiteSpace(_motivo)) { _error = "El motivo es obligatorio."; return; }
+
+        _guardando = true;
+        try
+        {
+            decimal cantidadReal = _tipoAjuste switch
+            {
+                "ENTRADA" => _cantidad,
+                "SALIDA"  => -_cantidad,
+                "AJUSTE"  => _cantidad - _producto.StockActual,
+                _         => 0
+            };
+
+            if (_tipoAjuste == "SALIDA" && _producto.StockActual + cantidadReal < 0)
+            { _error = "Stock insuficiente para la salida."; return; }
+
+            await ProdSvc.AjustarStockAsync(_producto.ProductoId, cantidadReal, _tipoAjuste,
+                _motivo.Trim(), Sesion.Usuario!.UsuarioId);
+
+            // Refresca el producto
+            _producto = await Db.Productos.Include(p => p.Categoria)
+                .FirstAsync(p => p.ProductoId == _producto.ProductoId);
+
+            _exito = $"Stock actualizado: {_producto.StockActual} {_producto.UnidadMedida}";
+            _cantidad = 0; _motivo = string.Empty;
+            await CargarMovimientosHoy();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _guardando = false; }
+    }
+
+    private void LimpiarFormulario()
+    {
+        _producto = null; _cantidad = 0; _motivo = string.Empty;
+        _error = string.Empty; _exito = string.Empty; _errorBusqueda = string.Empty;
+    }
+
+    private static string BadgeTipo(string tipo) => tipo switch
+    {
+        "ENTRADA"  => "bg-success",
+        "SALIDA"   => "bg-danger",
+        "AJUSTE"   => "bg-warning text-dark",
+        "COMPRA"   => "bg-info text-dark",
+        _ => "bg-secondary"
+    };
+}

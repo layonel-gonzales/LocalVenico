@@ -1,0 +1,286 @@
+@page "/admin/usuarios"
+@rendermode InteractiveServer
+@using LocalVenico.Web.Data
+@using LocalVenico.Web.Data.Entidades
+@using LocalVenico.Web.Servicios
+@using Microsoft.EntityFrameworkCore
+@inject AppDbContext Db
+@inject SesionUsuario Sesion
+@inject IAutenticacionServicio Auth
+@inject NavigationManager Nav
+
+<PageTitle>Usuarios — LocalVenico</PageTitle>
+
+@if (!Sesion.EsAdmin) { Nav.NavigateTo("/"); return; }
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="mb-0 fw-bold">Usuarios</h2>
+    <button class="btn btn-primary" @onclick="AbrirNuevo">+ Nuevo usuario</button>
+</div>
+
+@if (_cargando)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else
+{
+    <div class="card border-0 shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Nombre</th>
+                        <th>Usuario</th>
+                        <th>Rol</th>
+                        <th>Último acceso</th>
+                        <th>Estado</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var u in _usuarios)
+                    {
+                        <tr>
+                            <td class="fw-semibold">@u.NombreCompleto</td>
+                            <td class="text-muted">@u.NombreUsuario</td>
+                            <td><span class="lv-rol-badge lv-rol-@u.Rol.Nombre">@u.Rol.Nombre</span></td>
+                            <td class="text-muted small">
+                                @(u.UltimoAcceso.HasValue ? u.UltimoAcceso.Value.ToString("dd/MM/yyyy HH:mm") : "Nunca")
+                            </td>
+                            <td>
+                                <span class="badge @(u.Activo ? "bg-success-subtle text-success" : "bg-secondary-subtle text-secondary")">
+                                    @(u.Activo ? "Activo" : "Inactivo")
+                                </span>
+                            </td>
+                            <td class="text-end">
+                                <button class="btn btn-sm btn-outline-secondary me-1" @onclick="() => AbrirEditar(u)">Editar</button>
+                                <button class="btn btn-sm btn-outline-warning me-1" @onclick="() => AbrirCambioPassword(u)">Password</button>
+                                @if (u.UsuarioId != Sesion.Usuario!.UsuarioId)
+                                {
+                                    <button class="btn btn-sm @(u.Activo ? "btn-outline-danger" : "btn-outline-success")"
+                                            @onclick="() => ToggleActivo(u)">
+                                        @(u.Activo ? "Desactivar" : "Activar")
+                                    </button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<!-- Modal usuario -->
+@if (_modalAbierto)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.4)">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(_editando ? "Editar" : "Nuevo") usuario</h5>
+                    <button class="btn-close" @onclick="CerrarModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(_error))
+                    {
+                        <div class="alert alert-danger py-2">@_error</div>
+                    }
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Nombre completo <span class="text-danger">*</span></label>
+                        <input @bind="_form.NombreCompleto" class="form-control" maxlength="100" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Nombre de usuario <span class="text-danger">*</span></label>
+                        <input @bind="_form.NombreUsuario" class="form-control" maxlength="50" disabled="@_editando" />
+                    </div>
+                    @if (!_editando)
+                    {
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Contraseña <span class="text-danger">*</span></label>
+                            <input @bind="_form.Password" type="password" class="form-control" />
+                            <div class="form-text">Mínimo 6 caracteres.</div>
+                        </div>
+                    }
+                    <div class="mb-1">
+                        <label class="form-label fw-semibold">Rol <span class="text-danger">*</span></label>
+                        <select @bind="_form.RolId" class="form-select">
+                            @foreach (var rol in _roles)
+                            {
+                                <option value="@rol.RolId">@rol.Nombre</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CerrarModal">Cancelar</button>
+                    <button class="btn btn-primary" @onclick="Guardar" disabled="@_guardando">
+                        @(_guardando ? "Guardando..." : "Guardar")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal cambio password -->
+@if (_modalPasswordAbierto)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.4)">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Cambiar contraseña — @_usuarioEditando?.NombreCompleto</h5>
+                    <button class="btn-close" @onclick="() => _modalPasswordAbierto = false"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(_errorPassword))
+                    {
+                        <div class="alert alert-danger py-2">@_errorPassword</div>
+                    }
+                    @if (_exitoPassword)
+                    {
+                        <div class="alert alert-success py-2">Contraseña actualizada correctamente.</div>
+                    }
+                    else
+                    {
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Nueva contraseña</label>
+                            <input @bind="_nuevaPassword" type="password" class="form-control" />
+                        </div>
+                        <div class="mb-1">
+                            <label class="form-label fw-semibold">Confirmar contraseña</label>
+                            <input @bind="_confirmarPassword" type="password" class="form-control" />
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => _modalPasswordAbierto = false">Cerrar</button>
+                    @if (!_exitoPassword)
+                    {
+                        <button class="btn btn-warning" @onclick="CambiarPassword" disabled="@_guardando">
+                            @(_guardando ? "Guardando..." : "Cambiar contraseña")
+                        </button>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .lv-rol-badge { padding: 2px 10px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+    .lv-rol-admin     { background: #fee2e2; color: #dc2626; }
+    .lv-rol-cajero    { background: #dbeafe; color: #1d4ed8; }
+    .lv-rol-bodeguero { background: #dcfce7; color: #15803d; }
+</style>
+
+@code {
+    private List<Usuario> _usuarios = [];
+    private List<Rol> _roles = [];
+    private bool _cargando = true;
+    private bool _modalAbierto = false;
+    private bool _modalPasswordAbierto = false;
+    private bool _editando = false;
+    private bool _guardando = false;
+    private string _error = string.Empty;
+    private string _errorPassword = string.Empty;
+    private bool _exitoPassword = false;
+    private string _nuevaPassword = string.Empty;
+    private string _confirmarPassword = string.Empty;
+    private UsuarioForm _form = new();
+    private int _editandoId;
+    private Usuario? _usuarioEditando;
+
+    protected override async Task OnInitializedAsync() => await Cargar();
+
+    private async Task Cargar()
+    {
+        _cargando = true;
+        _usuarios = await Db.Usuarios.Include(u => u.Rol).OrderBy(u => u.NombreCompleto).ToListAsync();
+        _roles = await Db.Roles.Where(r => r.Activo).OrderBy(r => r.Nombre).ToListAsync();
+        _cargando = false;
+    }
+
+    private void AbrirNuevo()
+    {
+        _form = new() { RolId = _roles.FirstOrDefault()?.RolId ?? 0 };
+        _editando = false; _error = string.Empty; _modalAbierto = true;
+    }
+
+    private void AbrirEditar(Usuario u)
+    {
+        _form = new() { NombreCompleto = u.NombreCompleto, NombreUsuario = u.NombreUsuario, RolId = u.RolId };
+        _editandoId = u.UsuarioId; _editando = true; _error = string.Empty; _modalAbierto = true;
+    }
+
+    private void AbrirCambioPassword(Usuario u)
+    {
+        _usuarioEditando = u; _nuevaPassword = string.Empty;
+        _confirmarPassword = string.Empty; _errorPassword = string.Empty;
+        _exitoPassword = false; _modalPasswordAbierto = true;
+    }
+
+    private void CerrarModal() => _modalAbierto = false;
+
+    private async Task Guardar()
+    {
+        _error = string.Empty;
+        if (string.IsNullOrWhiteSpace(_form.NombreCompleto) || string.IsNullOrWhiteSpace(_form.NombreUsuario))
+        { _error = "Nombre completo y usuario son obligatorios."; return; }
+        if (!_editando && (_form.Password.Length < 6))
+        { _error = "La contraseña debe tener al menos 6 caracteres."; return; }
+
+        _guardando = true;
+        try
+        {
+            if (_editando)
+            {
+                var u = await Db.Usuarios.FindAsync(_editandoId);
+                if (u is not null) { u.NombreCompleto = _form.NombreCompleto.Trim(); u.RolId = _form.RolId; }
+            }
+            else
+            {
+                Db.Usuarios.Add(new Usuario
+                {
+                    NombreCompleto = _form.NombreCompleto.Trim(),
+                    NombreUsuario  = _form.NombreUsuario.Trim().ToLower(),
+                    PasswordHash   = Auth.HashPassword(_form.Password),
+                    RolId          = _form.RolId
+                });
+            }
+            await Db.SaveChangesAsync();
+            _modalAbierto = false;
+            await Cargar();
+        }
+        catch { _error = "Error al guardar. El nombre de usuario podría estar en uso."; }
+        finally { _guardando = false; }
+    }
+
+    private async Task CambiarPassword()
+    {
+        _errorPassword = string.Empty;
+        if (_nuevaPassword.Length < 6) { _errorPassword = "Mínimo 6 caracteres."; return; }
+        if (_nuevaPassword != _confirmarPassword) { _errorPassword = "Las contraseñas no coinciden."; return; }
+
+        _guardando = true;
+        var u = await Db.Usuarios.FindAsync(_usuarioEditando!.UsuarioId);
+        if (u is not null) { u.PasswordHash = Auth.HashPassword(_nuevaPassword); await Db.SaveChangesAsync(); }
+        _exitoPassword = true;
+        _guardando = false;
+    }
+
+    private async Task ToggleActivo(Usuario u)
+    {
+        u.Activo = !u.Activo;
+        await Db.SaveChangesAsync();
+    }
+
+    private class UsuarioForm
+    {
+        public string NombreCompleto { get; set; } = string.Empty;
+        public string NombreUsuario { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+        public int RolId { get; set; }
+    }
+}

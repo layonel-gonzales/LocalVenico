@@ -1,0 +1,202 @@
+@*
+    Componente reutilizable para pistola lectora de código de barras.
+    Soporta: pistola USB HID (teclado + Enter) y cámara del celular.
+*@
+
+@rendermode InteractiveServer
+@inject IJSRuntime JS
+
+<div class="escaner-wrapper @CssClass">
+    <div class="input-group">
+        @if (MostrarIcono)
+        {
+            <span class="input-group-text escaner-icono" title="Lector de código de barras">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M1.5 1a.5.5 0 0 0-.5.5v3a.5.5 0 0 1-1 0v-3A1.5 1.5 0 0 1 1.5 0h3a.5.5 0 0 1 0 1zM11 .5a.5.5 0 0 1 .5-.5h3A1.5 1.5 0 0 1 16 1.5v3a.5.5 0 0 1-1 0v-3a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 1-.5-.5M.5 11a.5.5 0 0 1 .5.5v3a.5.5 0 0 0 .5.5h3a.5.5 0 0 1 0 1h-3A1.5 1.5 0 0 1 0 14.5v-3a.5.5 0 0 1 .5-.5m15 0a.5.5 0 0 1 .5.5v3a1.5 1.5 0 0 1-1.5 1.5h-3a.5.5 0 0 1 0-1h3a.5.5 0 0 0 .5-.5v-3a.5.5 0 0 1 .5-.5M3 4.5a.5.5 0 0 1 1 0v7a.5.5 0 0 1-1 0zm2 0a.5.5 0 0 1 1 0v7a.5.5 0 0 1-1 0zm2 0a.5.5 0 0 1 1 0v7a.5.5 0 0 1-1 0zm2 0a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5m0 11a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5M11 5a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1A.5.5 0 0 1 11 5m0 2a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1A.5.5 0 0 1 11 7m0 2a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1A.5.5 0 0 1 11 9"/>
+                </svg>
+            </span>
+        }
+        <input @ref="_inputRef"
+               type="text"
+               class="form-control @(Procesando ? "escaner-procesando" : "")"
+               placeholder="@Placeholder"
+               @bind="_valorActual"
+               @bind:event="oninput"
+               @onkeydown="AlPresionarTecla"
+               disabled="@Procesando"
+               autocomplete="off"
+               spellcheck="false" />
+        @if (Procesando)
+        {
+            <span class="input-group-text">
+                <span class="spinner-border spinner-border-sm text-primary" role="status"></span>
+            </span>
+        }
+        <!-- Botón cámara -->
+        @if (!Procesando)
+        {
+            <button class="btn btn-outline-primary escaner-btn-camara" type="button"
+                    @onclick="ToggleCamara" title="Escanear con cámara">
+                @if (_camaraActiva)
+                {
+                    <span>✕</span>
+                }
+                else
+                {
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M10.5 8.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0"/>
+                        <path d="M2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4zm.5 2a.5.5 0 1 1 0-1 .5.5 0 0 1 0 1m9 2.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0"/>
+                    </svg>
+                }
+            </button>
+        }
+        @if (MostrarBotonBuscar && !Procesando)
+        {
+            <button class="btn btn-outline-secondary" type="button" @onclick="DispararBusqueda">
+                Buscar
+            </button>
+        }
+    </div>
+
+    <!-- Visor de cámara -->
+    @if (_camaraActiva)
+    {
+        <div class="escaner-camara-container">
+            <div id="@_camaraElementId" class="escaner-camara-visor"></div>
+            <div class="escaner-camara-hint">Apunta al código de barras</div>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(_mensajeError))
+    {
+        <div class="escaner-error">@_mensajeError</div>
+    }
+</div>
+
+<style>
+    .escaner-btn-camara {
+        border-color: #DDE3EA;
+        color: #2563EB;
+        padding: 6px 12px;
+    }
+    .escaner-btn-camara:hover {
+        background: #EAF1FF;
+        border-color: #2563EB;
+    }
+    .escaner-camara-container {
+        margin-top: 10px;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 2px solid #2563EB;
+        background: #000;
+        position: relative;
+    }
+    .escaner-camara-visor {
+        width: 100%;
+        min-height: 200px;
+    }
+    .escaner-camara-hint {
+        position: absolute;
+        bottom: 0;
+        left: 0; right: 0;
+        background: rgba(0,0,0,.6);
+        color: #fff;
+        text-align: center;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 6px;
+    }
+</style>
+
+@code {
+    [Parameter] public EventCallback<string> OnCodigoLeido { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "Escanea el código de barras...";
+    [Parameter] public bool AutoFoco { get; set; } = true;
+    [Parameter] public bool MostrarIcono { get; set; } = true;
+    [Parameter] public bool MostrarBotonBuscar { get; set; } = false;
+    [Parameter] public bool Procesando { get; set; } = false;
+    [Parameter] public string CssClass { get; set; } = "";
+    [Parameter] public bool LimpiarAlLeer { get; set; } = true;
+
+    private ElementReference _inputRef;
+    private string _valorActual = string.Empty;
+    private string _mensajeError = string.Empty;
+    private bool _camaraActiva = false;
+    private DotNetObjectReference<InputEscaner>? _dotNetRef;
+    private string _camaraElementId = $"cam-{Guid.NewGuid():N}";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && AutoFoco)
+            await _inputRef.FocusAsync();
+    }
+
+    private async Task AlPresionarTecla(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await DispararBusqueda();
+    }
+
+    private async Task DispararBusqueda()
+    {
+        var codigo = _valorActual.Trim();
+        if (string.IsNullOrEmpty(codigo)) return;
+
+        _mensajeError = string.Empty;
+
+        if (LimpiarAlLeer)
+            _valorActual = string.Empty;
+
+        await OnCodigoLeido.InvokeAsync(codigo);
+        await _inputRef.FocusAsync();
+    }
+
+    private async Task ToggleCamara()
+    {
+        if (_camaraActiva)
+        {
+            await DetenerCamara();
+        }
+        else
+        {
+            _camaraActiva = true;
+            StateHasChanged();
+            await Task.Delay(100);
+            _dotNetRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("escanerCamara.start", _dotNetRef, _camaraElementId);
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnCameraCodeScanned(string code)
+    {
+        await DetenerCamara();
+        _valorActual = code;
+        StateHasChanged();
+        await OnCodigoLeido.InvokeAsync(code);
+        if (LimpiarAlLeer) _valorActual = string.Empty;
+        StateHasChanged();
+    }
+
+    private async Task DetenerCamara()
+    {
+        _camaraActiva = false;
+        await JS.InvokeVoidAsync("escanerCamara.stop");
+        _dotNetRef?.Dispose();
+        _dotNetRef = null;
+    }
+
+    public async Task EnfocarAsync() => await _inputRef.FocusAsync();
+
+    public void MostrarError(string mensaje)
+    {
+        _mensajeError = mensaje;
+        StateHasChanged();
+    }
+
+    public void LimpiarError()
+    {
+        _mensajeError = string.Empty;
+        StateHasChanged();
+    }
+}

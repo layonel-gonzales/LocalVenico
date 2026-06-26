@@ -1,0 +1,132 @@
+@page "/inventario/movimientos"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@inject AppDbContext Db
+@inject SesionUsuario Sesion
+@inject NavigationManager Nav
+
+<PageTitle>Movimientos de Stock — LocalVenico</PageTitle>
+@if (!Sesion.EstaAutenticado) { Nav.NavigateTo("/login"); return; }
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="mb-0 fw-bold">Historial de Movimientos</h2>
+</div>
+
+<!-- Filtros -->
+<div class="row g-2 mb-3">
+    <div class="col-md-3">
+        <input @bind="_filtroProducto" @bind:event="oninput" class="form-control" placeholder="Buscar producto..." />
+    </div>
+    <div class="col-md-2">
+        <select @bind="_filtroTipo" class="form-select">
+            <option value="">Todos los tipos</option>
+            <option>ENTRADA</option>
+            <option>SALIDA</option>
+            <option>AJUSTE</option>
+            <option>VENTA</option>
+            <option>COMPRA</option>
+            <option>ANULACION</option>
+        </select>
+    </div>
+    <div class="col-md-2">
+        <input @bind="_fechaDesde" type="date" class="form-control" />
+    </div>
+    <div class="col-md-2">
+        <input @bind="_fechaHasta" type="date" class="form-control" />
+    </div>
+    <div class="col-md-2">
+        <button class="btn btn-primary w-100" @onclick="Cargar">Filtrar</button>
+    </div>
+</div>
+
+@if (_cargando)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else
+{
+    <div class="card border-0 shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 small">
+                <thead class="table-light">
+                    <tr>
+                        <th>Fecha/Hora</th>
+                        <th>Producto</th>
+                        <th>Tipo</th>
+                        <th>Cantidad</th>
+                        <th>Stock antes</th>
+                        <th>Stock después</th>
+                        <th>Motivo / Origen</th>
+                        <th>Usuario</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (!_movimientos.Any())
+                    {
+                        <tr><td colspan="8" class="text-center text-muted py-4">No hay movimientos con los filtros aplicados.</td></tr>
+                    }
+                    @foreach (var m in _movimientos)
+                    {
+                        <tr>
+                            <td class="text-muted">@m.CreadoEn.ToString("dd/MM/yy HH:mm")</td>
+                            <td class="fw-semibold">@m.Producto.Nombre</td>
+                            <td><span class="badge @BadgeTipo(m.Tipo)">@m.Tipo</span></td>
+                            <td class="fw-bold @(m.Cantidad >= 0 ? "text-success" : "text-danger")">
+                                @(m.Cantidad >= 0 ? "+" : "")@m.Cantidad
+                            </td>
+                            <td class="text-muted">@m.StockAntes</td>
+                            <td>@m.StockDespues</td>
+                            <td class="text-muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                                @(m.Motivo ?? (m.VentaId.HasValue ? $"Boleta #{m.VentaId}" : m.OrdenCompraId.HasValue ? $"OC #{m.OrdenCompraId}" : "—"))
+                            </td>
+                            <td class="text-muted">@m.Usuario.NombreCompleto</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="px-3 py-2 border-top text-muted small">
+            @_movimientos.Count movimientos mostrados
+        </div>
+    </div>
+}
+
+@code {
+    private List<StockMovimiento> _movimientos = [];
+    private bool _cargando = true;
+    private string _filtroProducto = string.Empty, _filtroTipo = string.Empty;
+    private DateTime _fechaDesde = DateTime.Today.AddDays(-7);
+    private DateTime _fechaHasta = DateTime.Today;
+
+    protected override async Task OnInitializedAsync() => await Cargar();
+
+    private async Task Cargar()
+    {
+        _cargando = true;
+        var hasta = _fechaHasta.AddDays(1);
+        var query = Db.StockMovimientos
+            .Include(m => m.Producto)
+            .Include(m => m.Usuario)
+            .Where(m => m.CreadoEn >= _fechaDesde && m.CreadoEn < hasta);
+
+        if (!string.IsNullOrEmpty(_filtroTipo))
+            query = query.Where(m => m.Tipo == _filtroTipo);
+
+        if (!string.IsNullOrEmpty(_filtroProducto))
+            query = query.Where(m => m.Producto.Nombre.Contains(_filtroProducto));
+
+        _movimientos = await query.OrderByDescending(m => m.CreadoEn).Take(200).ToListAsync();
+        _cargando = false;
+    }
+
+    private static string BadgeTipo(string tipo) => tipo switch
+    {
+        "ENTRADA"   => "bg-success",
+        "SALIDA"    => "bg-danger",
+        "AJUSTE"    => "bg-warning text-dark",
+        "VENTA"     => "bg-primary",
+        "COMPRA"    => "bg-info text-dark",
+        "ANULACION" => "bg-secondary",
+        _ => "bg-secondary"
+    };
+}

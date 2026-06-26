@@ -1,0 +1,129 @@
+@page "/configuracion/empresa"
+@rendermode InteractiveServer
+@using LocalVenico.Web.Data
+@using LocalVenico.Web.Data.Entidades
+@using LocalVenico.Web.Servicios
+@using Microsoft.EntityFrameworkCore
+@inject AppDbContext Db
+@inject SesionUsuario Sesion
+@inject NavigationManager Nav
+
+<PageTitle>Datos de Empresa — LocalVenico</PageTitle>
+
+@if (!Sesion.EsAdmin) { Nav.NavigateTo("/"); return; }
+
+<div class="mb-4">
+    <h2 class="mb-0 fw-bold">Datos de la Empresa</h2>
+    <p class="text-muted mb-0">Esta información aparece en las boletas impresas.</p>
+</div>
+
+@if (_cargando)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else
+{
+    <div class="card border-0 shadow-sm" style="max-width:640px">
+        <div class="card-body p-4">
+            @if (!string.IsNullOrEmpty(_exito))
+            {
+                <div class="alert alert-success py-2 mb-3">@_exito</div>
+            }
+            @if (!string.IsNullOrEmpty(_error))
+            {
+                <div class="alert alert-danger py-2 mb-3">@_error</div>
+            }
+
+            <div class="row g-3">
+                <div class="col-12">
+                    <label class="form-label fw-semibold">Razón Social <span class="text-danger">*</span></label>
+                    <input @bind="_emp.RazonSocial" class="form-control" maxlength="150" placeholder="Comercial Juan Pérez E.I.R.L." />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">RUT <span class="text-danger">*</span></label>
+                    <input @bind="_emp.Rut" class="form-control" maxlength="12" placeholder="12.345.678-9" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Giro</label>
+                    <input @bind="_emp.Giro" class="form-control" maxlength="150" />
+                </div>
+                <div class="col-12">
+                    <label class="form-label fw-semibold">Dirección <span class="text-danger">*</span></label>
+                    <input @bind="_emp.Direccion" class="form-control" maxlength="200" placeholder="Av. Ejemplo 123" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Comuna <span class="text-danger">*</span></label>
+                    <input @bind="_emp.Comuna" class="form-control" maxlength="100" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Región</label>
+                    <input @bind="_emp.Region" class="form-control" maxlength="100" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Teléfono</label>
+                    <input @bind="_emp.Telefono" class="form-control" maxlength="20" placeholder="+56 9 1234 5678" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Email</label>
+                    <input @bind="_emp.Email" class="form-control" type="email" maxlength="150" />
+                </div>
+
+                <div class="col-12 pt-2">
+                    <div class="fw-semibold text-muted small text-uppercase mb-2" style="letter-spacing:.5px">Configuración de precios e IVA</div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">% IVA</label>
+                    <div class="input-group">
+                        <input @bind="_emp.PorcentajeIva" class="form-control" type="number" min="0" max="100" step="0.01" />
+                        <span class="input-group-text">%</span>
+                    </div>
+                </div>
+                <div class="col-md-6 d-flex align-items-end">
+                    <div class="form-check">
+                        <input @bind="_emp.PreciosConIva" class="form-check-input" type="checkbox" id="chkIva" />
+                        <label class="form-check-label" for="chkIva">
+                            Precios de venta incluyen IVA<br>
+                            <small class="text-muted">(Recomendado para almacenes retail)</small>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="col-12 pt-2">
+                    <button class="btn btn-primary px-4" @onclick="Guardar" disabled="@_guardando">
+                        @(_guardando ? "Guardando..." : "Guardar cambios")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private Data.Entidades.Empresa _emp = new();
+    private bool _cargando = true, _guardando = false;
+    private string _error = string.Empty, _exito = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _cargando = true;
+        _emp = await Db.Empresa.FirstOrDefaultAsync() ?? new Data.Entidades.Empresa();
+        _cargando = false;
+    }
+
+    private async Task Guardar()
+    {
+        _error = string.Empty; _exito = string.Empty;
+        if (string.IsNullOrWhiteSpace(_emp.RazonSocial) || string.IsNullOrWhiteSpace(_emp.Rut))
+        { _error = "Razón social y RUT son obligatorios."; return; }
+
+        _guardando = true;
+        _emp.ActualizadoEn = DateTime.Now;
+
+        if (_emp.EmpresaId == 0)
+            Db.Empresa.Add(_emp);
+
+        try { await Db.SaveChangesAsync(); _exito = "Datos guardados correctamente."; }
+        catch { _error = "Error al guardar los datos."; }
+        finally { _guardando = false; }
+    }
+}

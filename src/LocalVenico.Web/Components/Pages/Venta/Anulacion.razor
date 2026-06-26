@@ -1,0 +1,195 @@
+@page "/venta/anulacion"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@inject AppDbContext Db
+@inject SesionUsuario Sesion
+@inject VentaServicio VentaSvc
+@inject NavigationManager Nav
+
+<PageTitle>Anulación de Venta — LocalVenico</PageTitle>
+@if (!Sesion.EsCajero) { Nav.NavigateTo("/login"); return; }
+
+<div class="mb-4">
+    <h2 class="mb-0 fw-bold">Anulación de Venta</h2>
+    <p class="text-muted mb-0">Busca una boleta y anúlala indicando el motivo. El stock se repone automáticamente.</p>
+</div>
+
+<div class="row g-4">
+    <!-- Buscar boleta -->
+    <div class="col-md-5">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <h6 class="fw-bold mb-3">Buscar boleta</h6>
+                <div class="input-group mb-3">
+                    <span class="input-group-text">N°</span>
+                    <input @bind="_numeroBoleta" type="number" min="1" class="form-control" placeholder="Número de boleta" />
+                    <button class="btn btn-primary" @onclick="BuscarVenta" disabled="@_buscando">
+                        @(_buscando ? "Buscando..." : "Buscar")
+                    </button>
+                </div>
+
+                @if (!string.IsNullOrEmpty(_errorBusqueda))
+                {
+                    <div class="alert alert-warning py-2">@_errorBusqueda</div>
+                }
+
+                <!-- Últimas ventas del día -->
+                <h6 class="fw-bold mt-3 mb-2">Ventas de hoy</h6>
+                @if (_ventasHoy.Any())
+                {
+                    <div class="list-group" style="max-height:300px;overflow-y:auto">
+                        @foreach (var v in _ventasHoy)
+                        {
+                            <button class="list-group-item list-group-item-action py-2 @(_ventaSeleccionada?.VentaId == v.VentaId ? "active" : "")"
+                                    @onclick="() => SeleccionarVenta(v)">
+                                <div class="d-flex justify-content-between">
+                                    <span class="fw-semibold">Boleta #@v.NumeroBoleta</span>
+                                    <span>$@v.Total.ToString("N0")</span>
+                                </div>
+                                <div class="small @(_ventaSeleccionada?.VentaId == v.VentaId ? "text-white-50" : "text-muted")">
+                                    @v.FechaVenta.ToString("HH:mm") · @v.MedioPago?.Nombre ·
+                                    <span class="badge @(v.Estado == "ANULADA" ? "bg-danger" : "bg-success")">@v.Estado</span>
+                                </div>
+                            </button>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <p class="text-muted small">Sin ventas hoy.</p>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- Detalle + anulación -->
+    <div class="col-md-7">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                @if (_ventaSeleccionada is null)
+                {
+                    <div class="text-center text-muted py-5">
+                        <div style="font-size:48px">🧾</div>
+                        <div>Selecciona una boleta para ver sus detalles</div>
+                    </div>
+                }
+                else
+                {
+                    <div class="d-flex justify-content-between align-items-start mb-3">
+                        <div>
+                            <h5 class="fw-bold mb-0">Boleta N° @_ventaSeleccionada.NumeroBoleta</h5>
+                            <div class="text-muted small">@_ventaSeleccionada.FechaVenta.ToString("dd/MM/yyyy HH:mm") · @_ventaSeleccionada.MedioPago?.Nombre</div>
+                        </div>
+                        <span class="badge fs-6 @(_ventaSeleccionada.Estado == "ANULADA" ? "bg-danger" : "bg-success")">
+                            @_ventaSeleccionada.Estado
+                        </span>
+                    </div>
+
+                    <!-- Detalle items -->
+                    <table class="table table-sm small mb-3">
+                        <thead class="table-light">
+                            <tr><th>Producto</th><th class="text-end">Cant.</th><th class="text-end">P.Unit.</th><th class="text-end">Subtotal</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var d in _ventaSeleccionada.Detalles)
+                            {
+                                <tr>
+                                    <td>@d.NombreProducto</td>
+                                    <td class="text-end">@d.Cantidad</td>
+                                    <td class="text-end">$@d.PrecioUnitario.ToString("N0")</td>
+                                    <td class="text-end">$@d.Subtotal.ToString("N0")</td>
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot>
+                            @if (_ventaSeleccionada.DescuentoTotal > 0)
+                            {
+                                <tr class="text-muted"><td colspan="3">Descuento global</td><td class="text-end">-$@_ventaSeleccionada.DescuentoTotal.ToString("N0")</td></tr>
+                            }
+                            <tr class="fw-bold"><td colspan="3">TOTAL</td><td class="text-end">$@_ventaSeleccionada.Total.ToString("N0")</td></tr>
+                        </tfoot>
+                    </table>
+
+                    @if (_ventaSeleccionada.Estado == "ANULADA")
+                    {
+                        <div class="alert alert-danger mb-0">
+                            <strong>Venta ya anulada.</strong><br/>
+                            Motivo: @_ventaSeleccionada.MotivoAnulacion
+                        </div>
+                    }
+                    else
+                    {
+                        @if (!string.IsNullOrEmpty(_error))   { <div class="alert alert-danger py-2 mb-3">@_error</div> }
+                        @if (!string.IsNullOrEmpty(_exito))   { <div class="alert alert-success py-2 mb-3">@_exito</div> }
+
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Motivo de anulación <span class="text-danger">*</span></label>
+                            <textarea @bind="_motivo" class="form-control" rows="2" maxlength="300"
+                                      placeholder="ej: Error de precio, devolución del cliente..."></textarea>
+                        </div>
+                        <button class="btn btn-danger px-4" @onclick="AnularVenta" disabled="@_anulando">
+                            @(_anulando ? "Anulando..." : "Anular venta")
+                        </button>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private int _numeroBoleta;
+    private Venta? _ventaSeleccionada;
+    private List<Venta> _ventasHoy = [];
+    private string _motivo = string.Empty;
+    private string _error = string.Empty, _exito = string.Empty, _errorBusqueda = string.Empty;
+    private bool _buscando, _anulando;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _ventasHoy = await Db.Ventas
+            .Include(v => v.MedioPago)
+            .Include(v => v.Detalles)
+            .Where(v => v.FechaVenta.Date == DateTime.Today)
+            .OrderByDescending(v => v.NumeroBoleta)
+            .Take(30)
+            .ToListAsync();
+    }
+
+    private async Task BuscarVenta()
+    {
+        _errorBusqueda = string.Empty;
+        _buscando = true;
+        var venta = await Db.Ventas
+            .Include(v => v.MedioPago)
+            .Include(v => v.Detalles)
+            .FirstOrDefaultAsync(v => v.NumeroBoleta == _numeroBoleta);
+        if (venta is null) _errorBusqueda = $"No se encontró boleta N° {_numeroBoleta}.";
+        else SeleccionarVenta(venta);
+        _buscando = false;
+    }
+
+    private void SeleccionarVenta(Venta v)
+    {
+        _ventaSeleccionada = v;
+        _motivo = string.Empty; _error = string.Empty; _exito = string.Empty;
+    }
+
+    private async Task AnularVenta()
+    {
+        if (string.IsNullOrWhiteSpace(_motivo)) { _error = "El motivo es obligatorio."; return; }
+        _error = string.Empty; _anulando = true;
+        try
+        {
+            await VentaSvc.AnularVentaAsync(_ventaSeleccionada!.VentaId, _motivo.Trim(), Sesion.Usuario!.UsuarioId);
+            _ventaSeleccionada.Estado = "ANULADA";
+            _ventaSeleccionada.MotivoAnulacion = _motivo;
+            _exito = "Venta anulada correctamente. El stock fue repuesto.";
+            _motivo = string.Empty;
+            // Refrescar lista
+            await OnInitializedAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _anulando = false; }
+    }
+}

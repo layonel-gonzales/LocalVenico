@@ -1,0 +1,61 @@
+@page "/setup"
+@rendermode InteractiveServer
+@using LocalVenico.Web.Data
+@using LocalVenico.Web.Servicios
+@using Microsoft.EntityFrameworkCore
+@inject AppDbContext Db
+@inject IAutenticacionServicio Auth
+@inject IWebHostEnvironment Env
+
+<PageTitle>Setup inicial</PageTitle>
+
+<div style="max-width:400px;margin:80px auto;padding:32px;background:#fff;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.1)">
+    <h3 class="mb-1">Reset contraseña admin</h3>
+    <p class="text-muted small mb-4">Solo disponible en modo Development.</p>
+
+    @if (!Env.IsDevelopment())
+    {
+        <div class="alert alert-danger">No disponible en producción.</div>
+    }
+    else if (_listo)
+    {
+        <div class="alert alert-success">
+            ✅ Contraseña actualizada correctamente.<br/>
+            <strong>Usuario:</strong> admin<br/>
+            <strong>Contraseña:</strong> @_nuevaPass
+        </div>
+        <a href="/login" class="btn btn-primary w-100 mt-2">Ir al Login</a>
+    }
+    else
+    {
+        <div class="mb-3">
+            <label class="form-label fw-semibold">Nueva contraseña para admin</label>
+            <input @bind="_nuevaPass" class="form-control" type="text" placeholder="ej: Admin1234" />
+        </div>
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <div class="alert alert-danger py-2">@_error</div>
+        }
+        <button class="btn btn-primary w-100" @onclick="Resetear" disabled="@_guardando">
+            @(_guardando ? "Actualizando..." : "Actualizar contraseña")
+        </button>
+    }
+</div>
+
+@code {
+    private string _nuevaPass = "Admin1234";
+    private bool _listo = false, _guardando = false;
+    private string _error = string.Empty;
+
+    private async Task Resetear()
+    {
+        if (_nuevaPass.Length < 4) { _error = "Mínimo 4 caracteres."; return; }
+        _guardando = true;
+        var admin = await Db.Usuarios.FirstOrDefaultAsync(u => u.NombreUsuario == "admin");
+        if (admin is null) { _error = "No se encontró el usuario admin en la BD."; _guardando = false; return; }
+        admin.PasswordHash = Auth.HashPassword(_nuevaPass);
+        await Db.SaveChangesAsync();
+        _listo = true;
+        _guardando = false;
+    }
+}

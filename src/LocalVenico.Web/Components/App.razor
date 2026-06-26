@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="stylesheet" href="@Assets["lib/bootstrap/dist/css/bootstrap.min.css"]" />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["LocalVenico.Web.styles.css"]" />
+    <ImportMap />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <HeadOutlet @rendermode="InteractiveServer" />
+</head>
+
+<body>
+    <Routes @rendermode="InteractiveServer" />
+    <script src="_framework/blazor.web.js"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <script>
+        window.escanerCamara = {
+            scanner: null,
+            start: function (dotnetRef, elementId) {
+                if (this.scanner) { this.stop(); }
+                this.scanner = new Html5Qrcode(elementId);
+                this.scanner.start(
+                    { facingMode: "environment" },
+                    { fps: 10, qrbox: { width: 280, height: 120 }, aspectRatio: 1.5 },
+                    function (code) {
+                        dotnetRef.invokeMethodAsync('OnCameraCodeScanned', code);
+                    },
+                    function () { }
+                ).catch(function (err) { console.error('Camera error:', err); });
+            },
+            stop: function () {
+                if (this.scanner) {
+                    try { this.scanner.stop(); } catch (e) { }
+                    try { this.scanner.clear(); } catch (e) { }
+                    this.scanner = null;
+                }
+            }
+        };
+    </script>
+</body>
+
+</html>

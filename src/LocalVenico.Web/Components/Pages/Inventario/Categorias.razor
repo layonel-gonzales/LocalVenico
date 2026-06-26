@@ -1,0 +1,205 @@
+@page "/inventario/categorias"
+@rendermode InteractiveServer
+@using LocalVenico.Web.Data
+@using LocalVenico.Web.Data.Entidades
+@using LocalVenico.Web.Servicios
+@using Microsoft.EntityFrameworkCore
+@inject AppDbContext Db
+@inject SesionUsuario Sesion
+@inject NavigationManager Nav
+
+<PageTitle>Categorías — LocalVenico</PageTitle>
+
+@if (!Sesion.EstaAutenticado) { Nav.NavigateTo("/login"); return; }
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="mb-0 fw-bold">Categorías</h2>
+    <button class="btn btn-primary" @onclick="AbrirNueva">+ Nueva categoría</button>
+</div>
+
+<!-- Tabla -->
+@if (_cargando)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else
+{
+    <div class="card border-0 shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th>
+                        <th>Nombre</th>
+                        <th>Descripción</th>
+                        <th>Productos</th>
+                        <th>Estado</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var cat in _categorias)
+                    {
+                        <tr>
+                            <td class="text-muted small">@cat.CategoriaId</td>
+                            <td class="fw-semibold">@cat.Nombre</td>
+                            <td class="text-muted small">@(cat.Descripcion ?? "—")</td>
+                            <td><span class="badge bg-secondary">@cat.Productos.Count(p => p.Activo)</span></td>
+                            <td>
+                                @if (cat.Activa)
+                                {
+                                    <span class="badge bg-success-subtle text-success">Activa</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-secondary-subtle text-secondary">Inactiva</span>
+                                }
+                            </td>
+                            <td class="text-end">
+                                <button class="btn btn-sm btn-outline-secondary me-1" @onclick="() => AbrirEditar(cat)">Editar</button>
+                                <button class="btn btn-sm @(cat.Activa ? "btn-outline-danger" : "btn-outline-success")"
+                                        @onclick="() => ToggleActiva(cat)">
+                                    @(cat.Activa ? "Desactivar" : "Activar")
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<!-- Modal -->
+@if (_modalAbierto)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.4)">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(_editando ? "Editar" : "Nueva") categoría</h5>
+                    <button class="btn-close" @onclick="CerrarModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(_error))
+                    {
+                        <div class="alert alert-danger py-2">@_error</div>
+                    }
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Nombre <span class="text-danger">*</span></label>
+                        <input @bind="_form.Nombre" class="form-control" placeholder="ej: Lácteos" maxlength="100" />
+                    </div>
+                    <div class="mb-1">
+                        <label class="form-label fw-semibold">Descripción</label>
+                        <textarea @bind="_form.Descripcion" class="form-control" rows="2" maxlength="300"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CerrarModal">Cancelar</button>
+                    <button class="btn btn-primary" @onclick="Guardar" disabled="@_guardando">
+                        @(_guardando ? "Guardando..." : "Guardar")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Categoria> _categorias = [];
+    private bool _cargando = true;
+    private bool _modalAbierto = false;
+    private bool _editando = false;
+    private bool _guardando = false;
+    private string _error = string.Empty;
+    private CategoriaForm _form = new();
+    private int _editandoId;
+
+    protected override async Task OnInitializedAsync() => await Cargar();
+
+    private async Task Cargar()
+    {
+        _cargando = true;
+        _categorias = await Db.Categorias
+            .Include(c => c.Productos)
+            .OrderBy(c => c.Nombre)
+            .ToListAsync();
+        _cargando = false;
+    }
+
+    private void AbrirNueva()
+    {
+        _form = new();
+        _editando = false;
+        _error = string.Empty;
+        _modalAbierto = true;
+    }
+
+    private void AbrirEditar(Categoria cat)
+    {
+        _form = new() { Nombre = cat.Nombre, Descripcion = cat.Descripcion };
+        _editandoId = cat.CategoriaId;
+        _editando = true;
+        _error = string.Empty;
+        _modalAbierto = true;
+    }
+
+    private void CerrarModal() => _modalAbierto = false;
+
+    private async Task Guardar()
+    {
+        _error = string.Empty;
+        if (string.IsNullOrWhiteSpace(_form.Nombre))
+        {
+            _error = "El nombre es obligatorio.";
+            return;
+        }
+
+        _guardando = true;
+
+        if (_editando)
+        {
+            var cat = await Db.Categorias.FindAsync(_editandoId);
+            if (cat is not null)
+            {
+                cat.Nombre = _form.Nombre.Trim();
+                cat.Descripcion = string.IsNullOrWhiteSpace(_form.Descripcion) ? null : _form.Descripcion.Trim();
+            }
+        }
+        else
+        {
+            Db.Categorias.Add(new Categoria
+            {
+                Nombre = _form.Nombre.Trim(),
+                Descripcion = string.IsNullOrWhiteSpace(_form.Descripcion) ? null : _form.Descripcion.Trim()
+            });
+        }
+
+        try
+        {
+            await Db.SaveChangesAsync();
+            _modalAbierto = false;
+            await Cargar();
+        }
+        catch (Exception ex) when (ex.InnerException?.Message.Contains("UNIQUE") == true)
+        {
+            _error = "Ya existe una categoría con ese nombre.";
+        }
+        finally
+        {
+            _guardando = false;
+        }
+    }
+
+    private async Task ToggleActiva(Categoria cat)
+    {
+        cat.Activa = !cat.Activa;
+        await Db.SaveChangesAsync();
+    }
+
+    private class CategoriaForm
+    {
+        public string Nombre { get; set; } = string.Empty;
+        public string? Descripcion { get; set; }
+    }
+}

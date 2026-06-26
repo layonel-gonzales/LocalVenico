@@ -1,0 +1,98 @@
+@page "/inventario/alertas"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@inject AppDbContext Db
+@inject SesionUsuario Sesion
+@inject NavigationManager Nav
+
+<PageTitle>Alertas de Stock — LocalVenico</PageTitle>
+@if (!Sesion.EstaAutenticado) { Nav.NavigateTo("/login"); return; }
+
+<div class="mb-4">
+    <h2 class="mb-0 fw-bold">Alertas de Stock Bajo</h2>
+    <p class="text-muted mb-0">Productos cuyo stock actual está por debajo del mínimo configurado.</p>
+</div>
+
+@if (_cargando)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else if (!_productos.Any())
+{
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-5">
+            <div style="font-size:48px">✅</div>
+            <h5 class="mt-2 text-success">Todo en orden</h5>
+            <p class="text-muted mb-0">Ningún producto está por debajo del stock mínimo.</p>
+        </div>
+    </div>
+}
+else
+{
+    <div class="alert alert-warning d-flex align-items-center gap-2 mb-3">
+        <span style="font-size:20px">⚠</span>
+        <span><strong>@_productos.Count producto@(_productos.Count != 1 ? "s" : "")</strong> con stock bajo mínimo.</span>
+    </div>
+
+    <div class="card border-0 shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Producto</th>
+                        <th>Categoría</th>
+                        <th>Stock actual</th>
+                        <th>Stock mínimo</th>
+                        <th>Déficit</th>
+                        <th>P. Compra</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var p in _productos)
+                    {
+                        var deficit = p.StockMinimo - p.StockActual;
+                        var pct = p.StockMinimo > 0 ? (int)(p.StockActual / p.StockMinimo * 100) : 0;
+                        <tr>
+                            <td>
+                                <div class="fw-semibold">@p.Nombre</div>
+                                <div class="text-muted small">@(p.CodigoBarras ?? p.CodigoInterno)</div>
+                            </td>
+                            <td class="text-muted small">@p.Categoria.Nombre</td>
+                            <td>
+                                <span class="text-danger fw-bold">@p.StockActual @p.UnidadMedida</span>
+                                <div class="progress mt-1" style="height:4px;width:80px">
+                                    <div class="progress-bar bg-danger" style="width:@pct%"></div>
+                                </div>
+                            </td>
+                            <td class="text-muted">@p.StockMinimo @p.UnidadMedida</td>
+                            <td class="text-danger fw-bold">−@deficit.ToString("G29") @p.UnidadMedida</td>
+                            <td class="text-muted small">$@p.PrecioCompra.ToString("N0")</td>
+                            <td class="text-end">
+                                <a href="/inventario/ajuste-stock" class="btn btn-sm btn-outline-primary">
+                                    Ajustar stock
+                                </a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Producto> _productos = [];
+    private bool _cargando = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _cargando = true;
+        _productos = await Db.Productos
+            .Include(p => p.Categoria)
+            .Where(p => p.Activo && p.StockActual < p.StockMinimo)
+            .OrderBy(p => p.StockActual / (p.StockMinimo == 0 ? 1 : p.StockMinimo))
+            .ToListAsync();
+        _cargando = false;
+    }
+}

@@ -1,0 +1,207 @@
+@page "/compras/proveedores"
+@rendermode InteractiveServer
+@using LocalVenico.Web.Data
+@using LocalVenico.Web.Data.Entidades
+@using LocalVenico.Web.Servicios
+@using Microsoft.EntityFrameworkCore
+@inject AppDbContext Db
+@inject SesionUsuario Sesion
+@inject NavigationManager Nav
+
+<PageTitle>Proveedores — LocalVenico</PageTitle>
+
+@if (!Sesion.EstaAutenticado) { Nav.NavigateTo("/login"); return; }
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="mb-0 fw-bold">Proveedores</h2>
+    <button class="btn btn-primary" @onclick="AbrirNuevo">+ Nuevo proveedor</button>
+</div>
+
+<!-- Buscador -->
+<div class="mb-3" style="max-width:360px">
+    <input @bind="_busqueda" @bind:event="oninput" class="form-control" placeholder="Buscar por nombre o RUT..." />
+</div>
+
+@if (_cargando)
+{
+    <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+}
+else
+{
+    var filtrados = _proveedores
+        .Where(p => string.IsNullOrEmpty(_busqueda) ||
+                    p.RazonSocial.Contains(_busqueda, StringComparison.OrdinalIgnoreCase) ||
+                    p.Rut.Contains(_busqueda, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    <div class="card border-0 shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Razón Social</th>
+                        <th>RUT</th>
+                        <th>Contacto</th>
+                        <th>Teléfono</th>
+                        <th>Estado</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (!filtrados.Any())
+                    {
+                        <tr><td colspan="6" class="text-center text-muted py-4">No se encontraron proveedores.</td></tr>
+                    }
+                    @foreach (var p in filtrados)
+                    {
+                        <tr>
+                            <td class="fw-semibold">@p.RazonSocial</td>
+                            <td class="text-muted">@p.Rut</td>
+                            <td class="text-muted small">@(p.NombreContacto ?? "—")</td>
+                            <td class="text-muted small">@(p.Telefono ?? "—")</td>
+                            <td>
+                                <span class="badge @(p.Activo ? "bg-success-subtle text-success" : "bg-secondary-subtle text-secondary")">
+                                    @(p.Activo ? "Activo" : "Inactivo")
+                                </span>
+                            </td>
+                            <td class="text-end">
+                                <button class="btn btn-sm btn-outline-secondary me-1" @onclick="() => AbrirEditar(p)">Editar</button>
+                                <button class="btn btn-sm @(p.Activo ? "btn-outline-danger" : "btn-outline-success")"
+                                        @onclick="() => ToggleActivo(p)">
+                                    @(p.Activo ? "Desactivar" : "Activar")
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@if (_modalAbierto)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.4)">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(_editando ? "Editar" : "Nuevo") proveedor</h5>
+                    <button class="btn-close" @onclick="CerrarModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(_error)) { <div class="alert alert-danger py-2 mb-3">@_error</div> }
+                    <div class="row g-3">
+                        <div class="col-md-8">
+                            <label class="form-label fw-semibold">Razón Social <span class="text-danger">*</span></label>
+                            <input @bind="_form.RazonSocial" class="form-control" maxlength="150" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">RUT <span class="text-danger">*</span></label>
+                            <input @bind="_form.Rut" class="form-control" maxlength="12" placeholder="12.345.678-9" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Nombre de Contacto</label>
+                            <input @bind="_form.NombreContacto" class="form-control" maxlength="100" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Teléfono</label>
+                            <input @bind="_form.Telefono" class="form-control" maxlength="20" placeholder="+56 9 ..." />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Email</label>
+                            <input @bind="_form.Email" class="form-control" type="email" maxlength="150" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Dirección</label>
+                            <input @bind="_form.Direccion" class="form-control" maxlength="200" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Notas</label>
+                            <textarea @bind="_form.Notas" class="form-control" rows="2" maxlength="500"></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CerrarModal">Cancelar</button>
+                    <button class="btn btn-primary" @onclick="Guardar" disabled="@_guardando">
+                        @(_guardando ? "Guardando..." : "Guardar")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Proveedor> _proveedores = [];
+    private bool _cargando = true, _modalAbierto = false, _editando = false, _guardando = false;
+    private string _error = string.Empty, _busqueda = string.Empty;
+    private ProveedorForm _form = new();
+    private int _editandoId;
+
+    protected override async Task OnInitializedAsync() => await Cargar();
+
+    private async Task Cargar()
+    {
+        _cargando = true;
+        _proveedores = await Db.Proveedores.OrderBy(p => p.RazonSocial).ToListAsync();
+        _cargando = false;
+    }
+
+    private void AbrirNuevo() { _form = new(); _editando = false; _error = string.Empty; _modalAbierto = true; }
+
+    private void AbrirEditar(Proveedor p)
+    {
+        _form = new()
+        {
+            RazonSocial = p.RazonSocial, Rut = p.Rut, NombreContacto = p.NombreContacto,
+            Telefono = p.Telefono, Email = p.Email, Direccion = p.Direccion, Notas = p.Notas
+        };
+        _editandoId = p.ProveedorId; _editando = true; _error = string.Empty; _modalAbierto = true;
+    }
+
+    private void CerrarModal() => _modalAbierto = false;
+
+    private async Task Guardar()
+    {
+        _error = string.Empty;
+        if (string.IsNullOrWhiteSpace(_form.RazonSocial) || string.IsNullOrWhiteSpace(_form.Rut))
+        { _error = "Razón social y RUT son obligatorios."; return; }
+        _guardando = true;
+        if (_editando)
+        {
+            var p = await Db.Proveedores.FindAsync(_editandoId);
+            if (p is not null)
+            {
+                p.RazonSocial = _form.RazonSocial.Trim(); p.Rut = _form.Rut.Trim();
+                p.NombreContacto = _form.NombreContacto; p.Telefono = _form.Telefono;
+                p.Email = _form.Email; p.Direccion = _form.Direccion; p.Notas = _form.Notas;
+            }
+        }
+        else
+        {
+            Db.Proveedores.Add(new Proveedor
+            {
+                RazonSocial = _form.RazonSocial.Trim(), Rut = _form.Rut.Trim(),
+                NombreContacto = _form.NombreContacto, Telefono = _form.Telefono,
+                Email = _form.Email, Direccion = _form.Direccion, Notas = _form.Notas
+            });
+        }
+        try { await Db.SaveChangesAsync(); _modalAbierto = false; await Cargar(); }
+        catch { _error = "Error al guardar."; }
+        finally { _guardando = false; }
+    }
+
+    private async Task ToggleActivo(Proveedor p) { p.Activo = !p.Activo; await Db.SaveChangesAsync(); }
+
+    private class ProveedorForm
+    {
+        public string RazonSocial { get; set; } = string.Empty;
+        public string Rut { get; set; } = string.Empty;
+        public string? NombreContacto { get; set; }
+        public string? Telefono { get; set; }
+        public string? Email { get; set; }
+        public string? Direccion { get; set; }
+        public string? Notas { get; set; }
+    }
+}

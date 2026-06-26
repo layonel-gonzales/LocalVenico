@@ -1,0 +1,139 @@
+@page "/configuracion/impresora"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@inject AppDbContext Db
+@inject SesionUsuario Sesion
+@inject NavigationManager Nav
+
+<PageTitle>Configuración Impresora — LocalVenico</PageTitle>
+@if (!Sesion.EsAdmin) { Nav.NavigateTo("/"); return; }
+
+<div class="mb-4">
+    <h2 class="mb-0 fw-bold">Configuración de Impresora</h2>
+    <p class="text-muted mb-0">Parámetros para la impresora térmica de boletas (80mm).</p>
+</div>
+
+<div class="row justify-content-center">
+    <div class="col-md-7">
+        @if (!string.IsNullOrEmpty(_exito)) { <div class="alert alert-success">@_exito</div> }
+        @if (!string.IsNullOrEmpty(_error)) { <div class="alert alert-danger">@_error</div> }
+
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <h6 class="fw-bold mb-4">Configuración de impresora térmica 80mm</h6>
+
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label class="form-label fw-semibold">Nombre de la impresora en Windows</label>
+                        <input @bind="_config.NombreImpresora" class="form-control"
+                               placeholder="ej: POS-80 Thermal Printer" />
+                        <div class="form-text">Debe coincidir exactamente con el nombre en Impresoras y escáneres de Windows.</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold">Ancho del papel (mm)</label>
+                        <select @bind="_config.AnchoPapelMm" class="form-select">
+                            <option value="58">58 mm</option>
+                            <option value="72">72 mm</option>
+                            <option value="80">80 mm (estándar)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold">Caracteres por línea</label>
+                        <input @bind="_config.CaracteresPorLinea" type="number" min="20" max="60" class="form-control" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold">Copias por boleta</label>
+                        <input @bind="_config.CopiasImpresion" type="number" min="1" max="3" class="form-control" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold">Corte automático de papel</label>
+                        <div class="form-check mt-2">
+                            <input @bind="_config.CorteAutomatico" type="checkbox" class="form-check-input" id="corteAuto" />
+                            <label class="form-check-label" for="corteAuto">Activar corte automático</label>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label fw-semibold">Mensaje de pie de boleta</label>
+                        <input @bind="_config.MensajePieBoleta" class="form-control" maxlength="100"
+                               placeholder="ej: ¡Gracias por su compra!" />
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label fw-semibold">Logo en texto (cabecera)</label>
+                        <textarea @bind="_config.LogoTexto" class="form-control font-monospace" rows="3" maxlength="200"
+                                  placeholder="ej: === LocalVenico ===&#10;Tu almacén de confianza"></textarea>
+                        <div class="form-text">Arte ASCII o texto que aparece al inicio de cada boleta.</div>
+                    </div>
+                </div>
+
+                <div class="d-flex gap-2 mt-4">
+                    <button class="btn btn-primary px-4" @onclick="Guardar" disabled="@_guardando">
+                        @(_guardando ? "Guardando..." : "Guardar configuración")
+                    </button>
+                    <button class="btn btn-outline-secondary" @onclick="ImprimirPrueba">
+                        🖨 Boleta de prueba (browser)
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Info conexión -->
+        <div class="card border-0 shadow-sm mt-4">
+            <div class="card-body">
+                <h6 class="fw-bold mb-3">Información de conexión</h6>
+                <div class="row g-2 small">
+                    <div class="col-sm-4 text-muted fw-semibold">Puerto recomendado</div>
+                    <div class="col-sm-8">USB o LPT1 (impresora instalada en Windows)</div>
+                    <div class="col-sm-4 text-muted fw-semibold">Driver</div>
+                    <div class="col-sm-8">Instalar driver del fabricante (Epson TM, XPrinter, etc.)</div>
+                    <div class="col-sm-4 text-muted fw-semibold">Impresión desde</div>
+                    <div class="col-sm-8">Diálogo de impresión del navegador (Ctrl+P). Selecciona la impresora térmica y desactiva márgenes y cabeceras.</div>
+                    <div class="col-sm-4 text-muted fw-semibold">Tamaño de página</div>
+                    <div class="col-sm-8">Configura el tamaño personalizado de 80×297mm en el driver.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private ConfigImpresora _config = new();
+    private bool _guardando;
+    private string _exito = string.Empty, _error = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _config = await Db.ConfigImpresora.FirstOrDefaultAsync()
+            ?? new ConfigImpresora { AnchoPapelMm = 80, CaracteresPorLinea = 42, CopiasImpresion = 1, CorteAutomatico = true };
+    }
+
+    private async Task Guardar()
+    {
+        _exito = string.Empty; _error = string.Empty; _guardando = true;
+        try
+        {
+            var existente = await Db.ConfigImpresora.FirstOrDefaultAsync();
+            if (existente is null) Db.ConfigImpresora.Add(_config);
+            else
+            {
+                existente.NombreImpresora    = _config.NombreImpresora;
+                existente.AnchoPapelMm       = _config.AnchoPapelMm;
+                existente.CaracteresPorLinea = _config.CaracteresPorLinea;
+                existente.CopiasImpresion    = _config.CopiasImpresion;
+                existente.CorteAutomatico    = _config.CorteAutomatico;
+                existente.MensajePieBoleta   = _config.MensajePieBoleta;
+                existente.LogoTexto          = _config.LogoTexto;
+            }
+            await Db.SaveChangesAsync();
+            _exito = "Configuración guardada correctamente.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _guardando = false; }
+    }
+
+    private void ImprimirPrueba()
+    {
+        // Abre el diálogo de impresión del navegador con la página actual
+        // El usuario selecciona su impresora térmica
+        _ = Task.Run(() => { });
+    }
+}

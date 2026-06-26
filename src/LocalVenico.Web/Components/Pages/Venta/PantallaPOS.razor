@@ -1,0 +1,462 @@
+@page "/venta"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@inject AppDbContext Db
+@inject SesionUsuario Sesion
+@inject ProductoServicio ProdSvc
+@inject VentaServicio VentaSvc
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Punto de Venta — LocalVenico</PageTitle>
+@if (!Sesion.EsCajero) { Nav.NavigateTo("/login"); return; }
+
+<div class="pos-shell">
+
+    <!-- ── COLUMNA IZQUIERDA: Buscador + Carrito ── -->
+    <div class="pos-left">
+
+        <!-- Escáner / búsqueda -->
+        <div class="pos-search-bar">
+            <InputEscaner OnCodigoLeido="AgregarPorCodigo"
+                          Placeholder="Escanea código de barras o escribe el nombre..."
+                          AutoFoco="true"
+                          Procesando="_buscando" />
+        </div>
+
+        <!-- Resultado búsqueda por nombre -->
+        @if (_sugerencias.Any())
+        {
+            <div class="pos-sugerencias">
+                @foreach (var s in _sugerencias)
+                {
+                    <button class="pos-sugerencia-item" @onclick="() => AgregarProducto(s)">
+                        <span class="fw-semibold">@s.Nombre</span>
+                        <span class="text-muted small ms-2">@(s.CodigoBarras ?? s.CodigoInterno)</span>
+                        <span class="ms-auto fw-bold text-primary">$@s.PrecioVenta.ToString("N0")</span>
+                        <span class="text-muted small ms-2">Stock: @s.StockActual</span>
+                    </button>
+                }
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(_errorBusqueda))
+        {
+            <div class="alert alert-warning py-2 mx-3 mt-2">@_errorBusqueda</div>
+        }
+
+        <!-- Carrito -->
+        <div class="pos-carrito">
+            @if (!_carrito.Any())
+            {
+                <div class="pos-carrito-vacio">
+                    <div>🛒</div>
+                    <div>Escanea o busca un producto para comenzar</div>
+                </div>
+            }
+            else
+            {
+                <table class="table table-sm pos-tabla mb-0">
+                    <thead>
+                        <tr>
+                            <th>Producto</th>
+                            <th class="text-center" style="width:110px">Cantidad</th>
+                            <th class="text-end" style="width:90px">P.Unit.</th>
+                            <th class="text-end" style="width:90px">Subtotal</th>
+                            <th style="width:36px"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in _carrito)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="fw-semibold small">@item.NombreProducto</div>
+                                    <div class="text-muted" style="font-size:10px">@item.CodigoBarras</div>
+                                </td>
+                                <td>
+                                    <div class="input-group input-group-sm">
+                                        <button class="btn btn-outline-secondary" @onclick="() => CambiarCantidad(item, -1)">−</button>
+                                        <input type="number" class="form-control text-center"
+                                               value="@item.Cantidad"
+                                               @onchange="e => SetCantidad(item, e)"
+                                               min="0.001" step="0.001" style="min-width:0" />
+                                        <button class="btn btn-outline-secondary" @onclick="() => CambiarCantidad(item, 1)">+</button>
+                                    </div>
+                                </td>
+                                <td class="text-end align-middle small">$@item.PrecioUnitario.ToString("N0")</td>
+                                <td class="text-end align-middle fw-bold">$@item.Subtotal.ToString("N0")</td>
+                                <td class="align-middle">
+                                    <button class="btn btn-sm btn-link text-danger p-0" @onclick="() => EliminarItem(item)">✕</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+
+    <!-- ── COLUMNA DERECHA: Totales + Pago ── -->
+    <div class="pos-right">
+
+        <!-- Totales -->
+        <div class="pos-totales">
+            <div class="pos-total-row">
+                <span>Subtotal</span>
+                <span>$@_subtotal.ToString("N0")</span>
+            </div>
+            <div class="pos-total-row">
+                <span>Descuento global</span>
+                <div class="input-group input-group-sm" style="width:130px">
+                    <span class="input-group-text">$</span>
+                    <input @bind="_descuentoGlobal" type="number" min="0" class="form-control text-end" />
+                </div>
+            </div>
+            <div class="pos-total-final">
+                <span>TOTAL</span>
+                <span>$@_totalFinal.ToString("N0")</span>
+            </div>
+            <div class="pos-total-row text-muted small">
+                <span>IVA (@_empresa?.PorcentajeIva.ToString("G29")%)</span>
+                <span>$@_montoIva.ToString("N0")</span>
+            </div>
+        </div>
+
+        <!-- Medio de pago -->
+        <div class="pos-seccion">
+            <label class="pos-label">Medio de pago</label>
+            <div class="d-flex flex-wrap gap-2">
+                @foreach (var mp in _mediosPago)
+                {
+                    <button class="btn @(_medioPagoId == mp.MedioPagoId ? "btn-primary" : "btn-outline-secondary") btn-sm"
+                            @onclick="() => SeleccionarMedioPago(mp)">
+                        @mp.Nombre
+                    </button>
+                }
+            </div>
+        </div>
+
+        <!-- Efectivo: monto pagado y vuelto -->
+        @if (_medioPagoActual?.RequiereVuelto == true)
+        {
+            <div class="pos-seccion">
+                <label class="pos-label">Monto recibido</label>
+                <div class="input-group">
+                    <span class="input-group-text fw-bold">$</span>
+                    <input @bind="_montoPagado" @bind:event="oninput" type="number" min="0"
+                           class="form-control form-control-lg text-end fw-bold" />
+                </div>
+                @if (_montoPagado >= _totalFinal && _totalFinal > 0)
+                {
+                    <div class="pos-vuelto">
+                        Vuelto: <strong>$@((_montoPagado - _totalFinal).ToString("N0"))</strong>
+                    </div>
+                }
+                @if (_montoPagado > 0 && _montoPagado < _totalFinal)
+                {
+                    <div class="text-danger small mt-1">Falta: $@((_totalFinal - _montoPagado).ToString("N0"))</div>
+                }
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(_errorVenta))
+        {
+            <div class="alert alert-danger py-2">@_errorVenta</div>
+        }
+
+        <!-- Botones acción -->
+        <div class="pos-acciones">
+            <button class="btn btn-success pos-btn-cobrar"
+                    @onclick="CobrarVenta"
+                    disabled="@(!PuedeCobrar || _procesando)">
+                @if (_procesando)
+                {
+                    <span class="spinner-border spinner-border-sm me-2"></span>
+                }
+                <span>@(_procesando ? "Procesando..." : $"Cobrar  ${_totalFinal:N0}")</span>
+            </button>
+            <button class="btn btn-outline-danger pos-btn-cancelar"
+                    @onclick="LimpiarCarrito"
+                    disabled="@(!_carrito.Any() || _procesando)">
+                Cancelar venta
+            </button>
+        </div>
+
+        <!-- Items en carrito -->
+        <div class="pos-resumen-items text-muted small">
+            @_carrito.Count ítem(s) · @_carrito.Sum(i => i.Cantidad) unidades
+        </div>
+    </div>
+</div>
+
+<!-- Modal boleta post-venta -->
+@if (_ventaCompletada is not null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-body text-center py-4">
+                    <div style="font-size:48px">✅</div>
+                    <h4 class="fw-bold mt-2">Venta completada</h4>
+                    <p class="text-muted mb-3">Boleta interna N° @_ventaCompletada.NumeroBoleta</p>
+                    <div class="d-flex justify-content-center gap-3 mb-2">
+                        <div class="text-center">
+                            <div class="fw-bold fs-5">$@_ventaCompletada.Total.ToString("N0")</div>
+                            <div class="text-muted small">Total</div>
+                        </div>
+                        @if (_ventaCompletada.Vuelto > 0)
+                        {
+                            <div class="text-center">
+                                <div class="fw-bold fs-5 text-success">$@_ventaCompletada.Vuelto.ToString("N0")</div>
+                                <div class="text-muted small">Vuelto</div>
+                            </div>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer justify-content-center gap-2">
+                    <button class="btn btn-outline-secondary" @onclick="ImprimirBoleta">🖨 Imprimir boleta</button>
+                    <button class="btn btn-primary px-4" @onclick="NuevaVenta">Nueva venta</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Boleta oculta para impresión -->
+    <div id="boleta-print" style="display:none">
+        @((MarkupString)GenerarHtmlBoleta())
+    </div>
+}
+
+<style>
+    .pos-shell { display:flex; gap:0; height:calc(100vh - 56px); margin:-28px; }
+
+    .pos-left {
+        flex:1; display:flex; flex-direction:column;
+        border-right:1px solid #e2e8f0; background:#fff; overflow:hidden;
+    }
+    .pos-right {
+        width:340px; min-width:300px; display:flex; flex-direction:column;
+        background:#F4F6F9;
+        padding:18px; gap:14px; overflow-y:auto;
+        border-left:1px solid #E7EBF0;
+    }
+
+    .pos-search-bar { padding:14px 16px; border-bottom:1px solid #e2e8f0; background:#fafbfc; }
+    .pos-sugerencias { background:#fff; border-bottom:1px solid #e2e8f0; max-height:220px; overflow-y:auto; box-shadow: 0 4px 12px rgba(0,0,0,.06); }
+    .pos-sugerencia-item {
+        display:flex; align-items:center; width:100%; padding:10px 16px;
+        border:none; background:none; text-align:left;
+        border-bottom:1px solid #f8fafc; cursor:pointer; font-size:13px;
+        transition: background .1s;
+    }
+    .pos-sugerencia-item:hover { background:#eff6ff; }
+
+    .pos-carrito { flex:1; overflow-y:auto; }
+    .pos-carrito-vacio {
+        display:flex; flex-direction:column; align-items:center; justify-content:center;
+        height:100%; color:#94a3b8; font-size:14px; gap:10px;
+    }
+    .pos-carrito-vacio div:first-child { font-size:56px; opacity:.6; }
+    .pos-tabla thead th {
+        background:#f8fafc; font-size:10px; font-weight:700; color:#64748b;
+        border-bottom:2px solid #e2e8f0; padding:10px 12px;
+        text-transform:uppercase; letter-spacing:.5px;
+    }
+    .pos-tabla tbody td { padding:10px 12px; vertical-align:middle; font-size:13px; border-color:#f1f5f9; }
+    .pos-tabla tbody tr:hover { background:#fafbfc; }
+
+    .pos-totales {
+        background:#fff; border-radius:12px; padding:16px 18px;
+        border:1px solid #E7EBF0;
+    }
+    .pos-total-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:13px; color:#475467; }
+    .pos-total-final {
+        display:flex; justify-content:space-between; align-items:center;
+        font-size:24px; font-weight:800; color:#0F172A; letter-spacing:-.3px;
+        border-top:1px solid #E7EBF0; padding-top:12px; margin-top:8px;
+    }
+
+    .pos-seccion {
+        background:#fff; border-radius:12px; padding:14px 16px;
+        border:1px solid #E7EBF0;
+    }
+    .pos-label {
+        font-size:10px; font-weight:700; text-transform:uppercase;
+        letter-spacing:.8px; color:#667085; display:block; margin-bottom:10px;
+    }
+
+    .pos-vuelto {
+        margin-top:10px; background:#E7F7EE;
+        color:#0F7A37; border-radius:10px; padding:10px 14px;
+        font-size:16px; text-align:center; font-weight:700;
+    }
+
+    .pos-acciones { display:flex; flex-direction:column; gap:10px; margin-top:auto; }
+    .pos-btn-cobrar {
+        font-size:16px; font-weight:800; padding:16px; border-radius:12px;
+        background:#2563EB !important; border:none !important; color:#fff;
+        transition: background .15s;
+    }
+    .pos-btn-cobrar:hover:not(:disabled) { background:#1E40AF !important; }
+    .pos-btn-cobrar:disabled { opacity:.5; }
+    .pos-btn-cancelar { font-size:13px; border-radius:10px; color:#C4292E; border-color:#C4292E; }
+    .pos-resumen-items { text-align:center; padding:6px 0; font-size:12px; }
+
+    @@media (max-width: 767px) {
+        .pos-shell { flex-direction:column; height:auto; }
+        .pos-right { width:100%; min-width:0; }
+    }
+</style>
+
+@code {
+    private List<ItemCarrito> _carrito = [];
+    private List<Producto> _sugerencias = [];
+    private List<MedioPago> _mediosPago = [];
+    private Empresa? _empresa;
+    private int _medioPagoId;
+    private MedioPago? _medioPagoActual;
+    private decimal _descuentoGlobal;
+    private decimal _montoPagado;
+    private bool _buscando, _procesando;
+    private string _errorBusqueda = string.Empty, _errorVenta = string.Empty;
+    private Venta? _ventaCompletada;
+    private List<ItemCarrito> _carritoParaBoleta = [];
+
+    private decimal _subtotal    => _carrito.Sum(i => i.Subtotal);
+    private decimal _totalFinal  => Math.Max(0, _subtotal - _descuentoGlobal);
+    private decimal _montoIva    => Math.Round(_totalFinal - (_totalFinal / (1 + (_empresa?.PorcentajeIva ?? 19) / 100)), 0);
+    private bool PuedeCobrar     => _carrito.Any() && _medioPagoId > 0
+                                    && (_medioPagoActual?.RequiereVuelto != true || _montoPagado >= _totalFinal);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _mediosPago = await Db.MediosPago.Where(m => m.Activo).ToListAsync();
+        _empresa    = await Db.Empresa.FirstOrDefaultAsync();
+        if (_mediosPago.Any()) SeleccionarMedioPago(_mediosPago.First());
+    }
+
+    private async Task AgregarPorCodigo(string codigo)
+    {
+        _errorBusqueda = string.Empty; _sugerencias.Clear();
+        _buscando = true;
+
+        // Primero intenta código exacto
+        var producto = await ProdSvc.BuscarPorCodigoAsync(codigo);
+        if (producto is not null) { AgregarProducto(producto); _buscando = false; return; }
+
+        // Si no encuentra, busca por nombre
+        _sugerencias = await Db.Productos
+            .Include(p => p.Categoria)
+            .Where(p => p.Activo && p.Nombre.Contains(codigo))
+            .Take(8).ToListAsync();
+
+        if (!_sugerencias.Any())
+            _errorBusqueda = $"No se encontró producto: {codigo}";
+
+        _buscando = false;
+    }
+
+    private void AgregarProducto(Producto p)
+    {
+        _sugerencias.Clear(); _errorBusqueda = string.Empty;
+        var existente = _carrito.FirstOrDefault(i => i.ProductoId == p.ProductoId);
+        if (existente is not null)
+        {
+            existente.Cantidad++;
+        }
+        else
+        {
+            _carrito.Add(new ItemCarrito
+            {
+                ProductoId     = p.ProductoId,
+                NombreProducto = p.Nombre,
+                CodigoBarras   = p.CodigoBarras ?? p.CodigoInterno,
+                Cantidad       = 1,
+                PrecioUnitario = p.PrecioVenta
+            });
+        }
+    }
+
+    private void CambiarCantidad(ItemCarrito item, decimal delta)
+    {
+        item.Cantidad += delta;
+        if (item.Cantidad <= 0) _carrito.Remove(item);
+    }
+
+    private void SetCantidad(ItemCarrito item, ChangeEventArgs e)
+    {
+        if (decimal.TryParse(e.Value?.ToString(), out var val) && val > 0)
+            item.Cantidad = val;
+        else
+            _carrito.Remove(item);
+    }
+
+    private void EliminarItem(ItemCarrito item) => _carrito.Remove(item);
+    private void LimpiarCarrito() { _carrito.Clear(); _descuentoGlobal = 0; _montoPagado = 0; _errorVenta = string.Empty; }
+
+    private void SeleccionarMedioPago(MedioPago mp)
+    {
+        _medioPagoId      = mp.MedioPagoId;
+        _medioPagoActual  = mp;
+        _montoPagado      = mp.RequiereVuelto ? _totalFinal : 0;
+    }
+
+    private async Task CobrarVenta()
+    {
+        _errorVenta = string.Empty;
+        _procesando = true;
+        try
+        {
+            _carritoParaBoleta = [.._carrito];
+            var venta = await VentaSvc.CerrarVentaAsync(
+                _carrito, _medioPagoId, _descuentoGlobal, _montoPagado,
+                Sesion.Usuario!.UsuarioId, _empresa?.PorcentajeIva ?? 19);
+
+            _ventaCompletada = venta;
+            LimpiarCarrito();
+        }
+        catch (Exception ex) { _errorVenta = ex.Message; }
+        finally { _procesando = false; }
+    }
+
+    private void NuevaVenta() => _ventaCompletada = null;
+
+    private async Task ImprimirBoleta()
+    {
+        await JS.InvokeVoidAsync("eval", "window.print()");
+    }
+
+    private string GenerarHtmlBoleta()
+    {
+        if (_ventaCompletada is null) return string.Empty;
+        var empresa = _empresa;
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("<style>@media print { body > * { display:none!important; } #boleta-print { display:block!important; } }</style>");
+        sb.AppendLine("<div style='font-family:monospace;font-size:12px;width:80mm;margin:0 auto'>");
+        sb.AppendLine($"<div style='text-align:center;border-bottom:1px dashed #000;padding-bottom:8px;margin-bottom:8px'>");
+        sb.AppendLine($"<strong>{empresa?.RazonSocial ?? "LocalVenico"}</strong><br/>");
+        sb.AppendLine($"{empresa?.Giro}<br/>{empresa?.Direccion}, {empresa?.Comuna}<br/>");
+        sb.AppendLine($"RUT: {empresa?.Rut}</div>");
+        sb.AppendLine($"<div style='text-align:center'><strong>BOLETA N° {_ventaCompletada.NumeroBoleta}</strong><br/>");
+        sb.AppendLine($"{_ventaCompletada.FechaVenta:dd/MM/yyyy HH:mm}</div>");
+        sb.AppendLine("<hr style='border-top:1px dashed #000'/>");
+        foreach (var item in _carritoParaBoleta)
+        {
+            sb.AppendLine($"<div>{item.NombreProducto}</div>");
+            sb.AppendLine($"<div style='display:flex;justify-content:space-between'><span>{item.Cantidad} x ${item.PrecioUnitario:N0}</span><span>${item.Subtotal:N0}</span></div>");
+        }
+        sb.AppendLine("<hr style='border-top:1px dashed #000'/>");
+        sb.AppendLine($"<div style='display:flex;justify-content:space-between'><span>Neto</span><span>${_ventaCompletada.SubtotalNeto:N0}</span></div>");
+        sb.AppendLine($"<div style='display:flex;justify-content:space-between'><span>IVA ({empresa?.PorcentajeIva ?? 19}%)</span><span>${_ventaCompletada.MontoIva:N0}</span></div>");
+        if (_ventaCompletada.DescuentoTotal > 0)
+            sb.AppendLine($"<div style='display:flex;justify-content:space-between'><span>Descuento</span><span>-${_ventaCompletada.DescuentoTotal:N0}</span></div>");
+        sb.AppendLine($"<div style='display:flex;justify-content:space-between;font-weight:bold;font-size:14px'><span>TOTAL</span><span>${_ventaCompletada.Total:N0}</span></div>");
+        if (_ventaCompletada.Vuelto > 0)
+            sb.AppendLine($"<div style='display:flex;justify-content:space-between'><span>Vuelto</span><span>${_ventaCompletada.Vuelto:N0}</span></div>");
+        sb.AppendLine("<hr style='border-top:1px dashed #000'/>");
+        sb.AppendLine("<div style='text-align:center;font-size:11px'>Gracias por su compra</div>");
+        sb.AppendLine("</div>");
+        return sb.ToString();
+    }
+}

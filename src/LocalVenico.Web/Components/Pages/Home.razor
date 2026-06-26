@@ -1,0 +1,228 @@
+@page "/"
+@rendermode InteractiveServer
+@using LocalVenico.Web.Servicios
+@using LocalVenico.Web.Data
+@using Microsoft.EntityFrameworkCore
+@inject SesionUsuario Sesion
+@inject NavigationManager Nav
+@inject AppDbContext Db
+
+<PageTitle>Dashboard — LocalVenico</PageTitle>
+
+@if (!Sesion.EstaAutenticado)
+{
+    <script>window.location.href='/login';</script>
+    return;
+}
+
+<!-- Cabecera -->
+<div class="d-flex justify-content-between align-items-start mb-4">
+    <div>
+        <h2 class="mb-1" style="font-weight:800;color:#0F172A">Hola, @Sesion.Usuario!.NombreCompleto 👋</h2>
+        <p class="mb-0" style="color:#667085;font-size:14px">@DateTime.Now.ToString("dddd, d 'de' MMMM", new System.Globalization.CultureInfo("es-CL"))</p>
+    </div>
+    <a href="/venta" class="btn btn-primary px-4 py-2" style="font-weight:700">+ Nueva venta</a>
+</div>
+
+@if (_cargando)
+{
+    <div class="text-center py-5"><div class="spinner-border" style="color:#2563EB"></div></div>
+}
+else
+{
+    <!-- Stat cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-xl-3">
+            <div class="lv-stat-card">
+                <div class="lv-stat-icon" style="background:#EAF1FF">💰</div>
+                <div class="lv-stat-body">
+                    <div class="lv-stat-value">$@_ventasHoy.ToString("N0")</div>
+                    <div class="lv-stat-label">Ventas hoy</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-xl-3">
+            <div class="lv-stat-card">
+                <div class="lv-stat-icon" style="background:#E7F7EE">🧾</div>
+                <div class="lv-stat-body">
+                    <div class="lv-stat-value">@_transaccionesHoy</div>
+                    <div class="lv-stat-label">Transacciones</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-xl-3">
+            <div class="lv-stat-card">
+                <div class="lv-stat-icon" style="background:#FEF4E3">⚠️</div>
+                <div class="lv-stat-body">
+                    <div class="lv-stat-value">@_productosStockBajo</div>
+                    <div class="lv-stat-label">Productos con stock bajo</div>
+                </div>
+                @if (_productosStockBajo > 0)
+                {
+                    <a href="/inventario/alertas" class="lv-stat-badge-link">revisar</a>
+                }
+            </div>
+        </div>
+        <div class="col-6 col-xl-3">
+            <div class="lv-stat-card">
+                <div class="lv-stat-icon" style="background:#F7F9FB">📦</div>
+                <div class="lv-stat-body">
+                    <div class="lv-stat-value">@_totalProductos</div>
+                    <div class="lv-stat-label">Productos activos</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Accesos rápidos -->
+    <h6 style="font-weight:700;color:#0F172A" class="mb-3">Accesos rápidos</h6>
+    <div class="row g-3 mb-4">
+        <div class="col-12 col-md-4">
+            <a href="/venta" class="lv-quick-action lv-qa-primary">
+                <span class="lv-qa-icon">🛒</span>
+                <div>
+                    <div class="lv-qa-title">Nueva Venta</div>
+                    <div class="lv-qa-sub">Abrir punto de venta</div>
+                </div>
+            </a>
+        </div>
+        <div class="col-12 col-md-4">
+            <a href="/inventario/productos" class="lv-quick-action lv-qa-secondary">
+                <span class="lv-qa-icon">📦</span>
+                <div>
+                    <div class="lv-qa-title">Inventario</div>
+                    <div class="lv-qa-sub">Ver y editar productos</div>
+                </div>
+            </a>
+        </div>
+        @if (_productosStockBajo > 0)
+        {
+            <div class="col-12 col-md-4">
+                <a href="/inventario/alertas" class="lv-quick-action lv-qa-warning">
+                    <span class="lv-qa-icon">⚠️</span>
+                    <div>
+                        <div class="lv-qa-title">@_productosStockBajo productos</div>
+                        <div class="lv-qa-sub">con stock bajo mínimo</div>
+                    </div>
+                </a>
+            </div>
+        }
+    </div>
+
+    <!-- Tabla stock bajo -->
+    @if (_stockBajoItems.Any())
+    {
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 style="font-weight:700;color:#0F172A" class="mb-0">Stock bajo mínimo</h6>
+            <a href="/inventario/alertas" class="btn btn-outline-secondary btn-sm">Ver inventario</a>
+        </div>
+        <div class="card border-0">
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead>
+                        <tr>
+                            <th>PRODUCTO</th>
+                            <th>CATEGORÍA</th>
+                            <th>STOCK</th>
+                            <th>MÍNIMO</th>
+                            <th>REPONER</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in _stockBajoItems)
+                        {
+                            <tr>
+                                <td class="fw-bold">@p.Nombre</td>
+                                <td style="color:#667085">@p.Categoria?.Nombre</td>
+                                <td><span style="color:#C4292E;font-weight:700">@p.StockActual @p.UnidadMedida</span></td>
+                                <td style="color:#667085">@p.StockMinimo</td>
+                                <td class="fw-bold">@((p.StockMinimo * 2) - p.StockActual) @p.UnidadMedida</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+}
+
+<style>
+    .lv-stat-card {
+        background: #fff;
+        border-radius: 12px;
+        border: 1px solid #E7EBF0;
+        padding: 20px;
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        position: relative;
+        transition: box-shadow .2s;
+    }
+    .lv-stat-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.06); }
+    .lv-stat-icon {
+        width: 40px; height: 40px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        flex-shrink: 0;
+    }
+    .lv-stat-body { flex: 1; }
+    .lv-stat-value { font-size: 26px; font-weight: 800; color: #0F172A; letter-spacing: -.3px; line-height: 1.1; }
+    .lv-stat-label { font-size: 12px; color: #667085; margin-top: 4px; }
+    .lv-stat-badge-link {
+        position: absolute;
+        top: 16px; right: 16px;
+        background: #FEF4E3;
+        color: #B45309;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 3px 10px;
+        border-radius: 6px;
+        text-decoration: none;
+    }
+    .lv-stat-badge-link:hover { background: #FDE68A; }
+    .lv-quick-action {
+        display: flex; align-items: center; gap: 14px;
+        padding: 18px 22px; border-radius: 12px;
+        text-decoration: none; transition: transform 0.15s, box-shadow .15s;
+    }
+    .lv-quick-action:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.12); color: #fff; }
+    .lv-qa-primary   { background: #2563EB; color: #fff; }
+    .lv-qa-secondary { background: #131A29; color: #fff; }
+    .lv-qa-warning   { background: #E5484D; color: #fff; }
+    .lv-qa-icon      { font-size: 28px; }
+    .lv-qa-title     { font-weight: 700; font-size: 14px; }
+    .lv-qa-sub       { font-size: 12px; opacity: 0.8; }
+</style>
+
+@code {
+    private bool _cargando = true;
+    private decimal _ventasHoy;
+    private int _transaccionesHoy;
+    private int _productosStockBajo;
+    private int _totalProductos;
+    private List<Producto> _stockBajoItems = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Sesion.EstaAutenticado) return;
+        var hoy = DateTime.Today;
+        _ventasHoy = await Db.Ventas
+            .Where(v => v.Estado == "COMPLETADA" && v.FechaVenta.Date == hoy)
+            .SumAsync(v => (decimal?)v.Total) ?? 0;
+        _transaccionesHoy = await Db.Ventas
+            .CountAsync(v => v.Estado == "COMPLETADA" && v.FechaVenta.Date == hoy);
+        _productosStockBajo = await Db.Productos
+            .CountAsync(p => p.Activo && p.StockActual < p.StockMinimo);
+        _totalProductos = await Db.Productos.CountAsync(p => p.Activo);
+        _stockBajoItems = await Db.Productos
+            .Include(p => p.Categoria)
+            .Where(p => p.Activo && p.StockActual < p.StockMinimo)
+            .OrderBy(p => p.StockActual)
+            .Take(5)
+            .ToListAsync();
+        _cargando = false;
+    }
+}

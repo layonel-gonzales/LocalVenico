@@ -1,0 +1,269 @@
+@page "/login"
+@rendermode InteractiveServer
+@using LocalVenico.Web.Servicios
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+@inject IAutenticacionServicio Auth
+@inject SesionUsuario Sesion
+@inject NavigationManager Nav
+@inject ProtectedSessionStorage Storage
+
+<PageTitle>Iniciar Sesión — LocalVenico</PageTitle>
+
+<div class="login-shell">
+    <!-- Columna izquierda: branding -->
+    <div class="login-left">
+        <div class="login-left-content">
+            <!-- Logo -->
+            <div class="login-brand">
+                <div class="login-logo-icon"></div>
+                <span class="login-logo-text">LocalVenico</span>
+            </div>
+
+            <!-- Tagline -->
+            <h1 class="login-tagline">Tu almacén, bajo control.</h1>
+            <p class="login-desc">
+                Punto de venta, inventario y reportes para el almacén
+                de barrio — rápido y en pesos chilenos.
+            </p>
+
+            <!-- Features -->
+            <div class="login-features">
+                <div class="login-feature">
+                    <div class="login-feature-icon">🔫</div>
+                    <span>Checkout con lector de código</span>
+                </div>
+                <div class="login-feature">
+                    <div class="login-feature-icon">📦</div>
+                    <span>Inventario y alertas de stock</span>
+                </div>
+                <div class="login-feature">
+                    <div class="login-feature-icon">🧾</div>
+                    <span>Boletas y cierre de caja</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Columna derecha: formulario -->
+    <div class="login-right">
+        <div class="login-form-wrap">
+            <h2 class="login-form-title">Ingresar</h2>
+            <p class="login-form-sub">Inicia sesión para abrir la caja.</p>
+
+            <EditForm Model="_modelo" OnValidSubmit="IniciarSesion">
+                <DataAnnotationsValidator />
+
+                <div class="mb-3">
+                    <label class="form-label" style="font-weight:700;color:#0F172A">Usuario</label>
+                    <input @bind="_modelo.NombreUsuario"
+                           @bind:event="oninput"
+                           class="form-control form-control-lg"
+                           placeholder="nombre de usuario"
+                           autocomplete="username"
+                           disabled="@_cargando" />
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label" style="font-weight:700;color:#0F172A">Contraseña</label>
+                    <input @bind="_modelo.Password"
+                           @bind:event="oninput"
+                           type="password"
+                           class="form-control form-control-lg"
+                           placeholder="••••••••"
+                           autocomplete="current-password"
+                           @onkeydown="AlPresionarEnter"
+                           disabled="@_cargando" />
+                </div>
+
+                @if (!string.IsNullOrEmpty(_error))
+                {
+                    <div class="alert alert-danger py-2 mb-3">@_error</div>
+                }
+
+                <button type="submit" class="btn btn-primary btn-lg w-100" disabled="@_cargando"
+                        style="padding:14px;font-weight:700;font-size:15px;border-radius:10px">
+                    @if (_cargando)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2"></span>
+                        <span>Ingresando...</span>
+                    }
+                    else
+                    {
+                        <span>Ingresar</span>
+                    }
+                </button>
+            </EditForm>
+
+            <p class="login-demo">
+                Demo: <strong>admin</strong> / <strong>Admin1234</strong>
+            </p>
+        </div>
+    </div>
+</div>
+
+<style>
+    .login-shell {
+        display: flex;
+        min-height: 100vh;
+        margin: 0;
+    }
+
+    /* ── Columna izquierda ── */
+    .login-left {
+        flex: 1;
+        background: linear-gradient(160deg, #0F172A 0%, #131A29 100%);
+        display: flex;
+        align-items: center;
+        padding: 60px;
+        position: relative;
+    }
+    .login-left-content {
+        max-width: 480px;
+    }
+    .login-brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 60px;
+    }
+    .login-logo-icon {
+        width: 44px;
+        height: 44px;
+        background: #2563EB;
+        border-radius: 12px;
+    }
+    .login-logo-text {
+        font-size: 18px;
+        font-weight: 800;
+        color: #fff;
+    }
+    .login-tagline {
+        font-size: 36px;
+        font-weight: 800;
+        color: #fff;
+        line-height: 1.15;
+        margin: 0 0 20px;
+        letter-spacing: -.5px;
+    }
+    .login-desc {
+        font-size: 15px;
+        color: #AAB4C8;
+        line-height: 1.6;
+        margin: 0 0 50px;
+        max-width: 400px;
+    }
+    .login-features {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+    .login-feature {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: #CBD3E1;
+        font-size: 13px;
+        font-weight: 600;
+    }
+    .login-feature-icon {
+        width: 40px;
+        height: 40px;
+        background: rgba(255,255,255,.08);
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        flex-shrink: 0;
+    }
+
+    /* ── Columna derecha ── */
+    .login-right {
+        width: 50%;
+        min-width: 400px;
+        max-width: 560px;
+        background: #F4F6F9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 60px;
+    }
+    .login-form-wrap {
+        width: 100%;
+        max-width: 380px;
+    }
+    .login-form-title {
+        font-size: 28px;
+        font-weight: 800;
+        color: #0F172A;
+        margin: 0 0 6px;
+    }
+    .login-form-sub {
+        font-size: 14px;
+        color: #667085;
+        margin: 0 0 32px;
+    }
+    .login-demo {
+        text-align: center;
+        font-size: 12px;
+        color: #98A2B3;
+        margin-top: 24px;
+        margin-bottom: 0;
+        border-top: 1px solid #E7EBF0;
+        padding-top: 16px;
+    }
+
+    /* ── Mobile ── */
+    @@media (max-width: 767px) {
+        .login-shell { flex-direction: column; }
+        .login-left { padding: 30px; min-height: auto; }
+        .login-left-content { max-width: 100%; }
+        .login-tagline { font-size: 24px; margin-bottom: 12px; }
+        .login-desc { margin-bottom: 24px; font-size: 13px; }
+        .login-features { gap: 10px; margin-bottom: 0; }
+        .login-brand { margin-bottom: 30px; }
+        .login-right { width: 100%; min-width: 0; max-width: 100%; padding: 30px; }
+    }
+</style>
+
+@code {
+    private readonly LoginModelo _modelo = new();
+    private bool _cargando = false;
+    private string _error = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        if (Sesion.EstaAutenticado)
+            Nav.NavigateTo("/");
+    }
+
+    private async Task AlPresionarEnter(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await IniciarSesion();
+    }
+
+    private async Task IniciarSesion()
+    {
+        _error = string.Empty;
+        _cargando = true;
+
+        var usuario = await Auth.LoginAsync(_modelo.NombreUsuario, _modelo.Password);
+
+        if (usuario is null)
+        {
+            _error = "Usuario o contraseña incorrectos.";
+            _cargando = false;
+            return;
+        }
+
+        Sesion.IniciarSesion(usuario);
+        await Sesion.PersistirAsync(Storage);
+        Nav.NavigateTo("/");
+    }
+
+    private class LoginModelo
+    {
+        public string NombreUsuario { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+    }
+}
