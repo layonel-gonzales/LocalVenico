@@ -311,7 +311,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             RolId         = 1,
             NombreCompleto = "Administrador",
             NombreUsuario  = "admin",
-            PasswordHash   = "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj7oFJDKHbPm",
+            PasswordHash   = "$2b$12$w7U5s1ltCJlrCTawN.BLg.VDFKd3Ag8cXD03RrmdSVYlTTC5/bk5O",
             Activo         = true,
             CreadoEn       = new DateTime(2026, 1, 1)
         });
