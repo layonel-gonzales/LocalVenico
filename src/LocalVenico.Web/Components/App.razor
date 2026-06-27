@@ -20,8 +20,17 @@
     <script>
         window.escanerCamara = {
             scanner: null,
+            lastCode: null,
+            lastTime: 0,
+            confirmCode: null,
+            confirmCount: 0,
             start: function (dotnetRef, elementId) {
+                var self = this;
                 if (this.scanner) { this.stop(); }
+                this.lastCode = null;
+                this.lastTime = 0;
+                this.confirmCode = null;
+                this.confirmCount = 0;
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                     dotnetRef.invokeMethodAsync('OnCameraError', 'Cámara no disponible. Usa HTTPS (puerto 5001) para acceder con cámara.');
                     return;
@@ -31,6 +40,19 @@
                     { facingMode: "environment" },
                     { fps: 10, qrbox: { width: 280, height: 120 }, aspectRatio: 1.5 },
                     function (code) {
+                        var now = Date.now();
+                        if (code === self.lastCode && (now - self.lastTime) < 3000) return;
+                        if (code === self.confirmCode) {
+                            self.confirmCount++;
+                        } else {
+                            self.confirmCode = code;
+                            self.confirmCount = 1;
+                        }
+                        if (self.confirmCount < 2) return;
+                        self.lastCode = code;
+                        self.lastTime = now;
+                        self.confirmCode = null;
+                        self.confirmCount = 0;
                         dotnetRef.invokeMethodAsync('OnCameraCodeScanned', code);
                     },
                     function () { }
