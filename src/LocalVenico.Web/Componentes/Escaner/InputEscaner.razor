@@ -178,6 +178,14 @@
         StateHasChanged();
     }
 
+    [JSInvokable]
+    public async Task OnCameraError(string mensaje)
+    {
+        await DetenerCamara();
+        _mensajeError = mensaje;
+        StateHasChanged();
+    }
+
     private async Task DetenerCamara()
     {
         _camaraActiva = false;

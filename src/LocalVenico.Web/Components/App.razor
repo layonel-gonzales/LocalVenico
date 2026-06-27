@@ -22,6 +22,10 @@
             scanner: null,
             start: function (dotnetRef, elementId) {
                 if (this.scanner) { this.stop(); }
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    dotnetRef.invokeMethodAsync('OnCameraError', 'Cámara no disponible. Usa HTTPS (puerto 5001) para acceder con cámara.');
+                    return;
+                }
                 this.scanner = new Html5Qrcode(elementId);
                 this.scanner.start(
                     { facingMode: "environment" },
@@ -30,7 +34,13 @@
                         dotnetRef.invokeMethodAsync('OnCameraCodeScanned', code);
                     },
                     function () { }
-                ).catch(function (err) { console.error('Camera error:', err); });
+                ).catch(function (err) {
+                    var msg = 'No se pudo abrir la cámara.';
+                    if (err.toString().indexOf('NotAllowedError') >= 0) msg = 'Permiso de cámara denegado. Permite el acceso en tu navegador.';
+                    else if (err.toString().indexOf('NotFoundError') >= 0) msg = 'No se encontró una cámara en este dispositivo.';
+                    else if (err.toString().indexOf('insecure') >= 0 || err.toString().indexOf('secure') >= 0) msg = 'Cámara requiere HTTPS. Accede por https://' + location.hostname + ':5001';
+                    dotnetRef.invokeMethodAsync('OnCameraError', msg);
+                });
             },
             stop: function () {
                 if (this.scanner) {
