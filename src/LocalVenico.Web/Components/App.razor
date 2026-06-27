@@ -19,56 +19,147 @@
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <script>
         window.escanerCamara = {
-            scanner: null,
+            stream: null,
+            nativeDetector: null,
+            animFrameId: null,
+            html5Scanner: null,
             lastCode: null,
             lastTime: 0,
-            confirmCode: null,
-            confirmCount: 0,
+
             start: function (dotnetRef, elementId) {
                 var self = this;
-                if (this.scanner) { this.stop(); }
+                this.stop();
                 this.lastCode = null;
                 this.lastTime = 0;
-                this.confirmCode = null;
-                this.confirmCount = 0;
+
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                     dotnetRef.invokeMethodAsync('OnCameraError', 'Cámara no disponible. Usa HTTPS (puerto 5001) para acceder con cámara.');
                     return;
                 }
-                this.scanner = new Html5Qrcode(elementId);
-                this.scanner.start(
-                    { facingMode: "environment" },
-                    { fps: 10, qrbox: { width: 280, height: 120 }, aspectRatio: 1.5 },
+
+                // Intentar API nativa BarcodeDetector (Chrome Android — misma que usa Google)
+                if ('BarcodeDetector' in window) {
+                    self.startNative(dotnetRef, elementId);
+                } else {
+                    self.startFallback(dotnetRef, elementId);
+                }
+            },
+
+            // ── Modo nativo: BarcodeDetector API (rápido, usa el motor de Google) ──
+            startNative: function (dotnetRef, elementId) {
+                var self = this;
+                var container = document.getElementById(elementId);
+                container.innerHTML = '';
+                var video = document.createElement('video');
+                video.setAttribute('playsinline', '');
+                video.setAttribute('autoplay', '');
+                video.style.width = '100%';
+                video.style.display = 'block';
+                video.style.borderRadius = '8px';
+                container.appendChild(video);
+
+                self.nativeDetector = new BarcodeDetector({
+                    formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code']
+                });
+
+                navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: 'environment',
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 },
+                        focusMode: { ideal: 'continuous' },
+                        zoom: { ideal: 2 }
+                    }
+                }).then(function (stream) {
+                    self.stream = stream;
+                    video.srcObject = stream;
+                    video.play();
+
+                    // Activar autofoco continuo y torch si está disponible
+                    var track = stream.getVideoTracks()[0];
+                    var caps = track.getCapabilities ? track.getCapabilities() : {};
+                    var constraints = {};
+                    if (caps.focusMode && caps.focusMode.includes('continuous')) {
+                        constraints.focusMode = 'continuous';
+                    }
+                    if (Object.keys(constraints).length > 0) {
+                        track.applyConstraints({ advanced: [constraints] }).catch(function(){});
+                    }
+
+                    function scan() {
+                        if (!self.stream) return;
+                        self.nativeDetector.detect(video).then(function (barcodes) {
+                            if (barcodes.length > 0) {
+                                var code = barcodes[0].rawValue;
+                                var now = Date.now();
+                                if (code !== self.lastCode || (now - self.lastTime) > 3000) {
+                                    self.lastCode = code;
+                                    self.lastTime = now;
+                                    dotnetRef.invokeMethodAsync('OnCameraCodeScanned', code);
+                                }
+                            }
+                        }).catch(function () { });
+                        self.animFrameId = requestAnimationFrame(scan);
+                    }
+                    video.onloadedmetadata = function () { scan(); };
+                }).catch(function (err) {
+                    self.handleError(err, dotnetRef);
+                });
+            },
+
+            // ── Modo fallback: html5-qrcode (iOS, navegadores sin BarcodeDetector) ──
+            startFallback: function (dotnetRef, elementId) {
+                var self = this;
+                this.html5Scanner = new Html5Qrcode(elementId);
+                this.html5Scanner.start(
+                    { facingMode: 'environment' },
+                    {
+                        fps: 15,
+                        qrbox: { width: 280, height: 140 },
+                        aspectRatio: 1.5,
+                        videoConstraints: {
+                            facingMode: 'environment',
+                            width: { ideal: 1920 },
+                            height: { ideal: 1080 },
+                            advanced: [{ focusMode: 'continuous' }]
+                        }
+                    },
                     function (code) {
                         var now = Date.now();
                         if (code === self.lastCode && (now - self.lastTime) < 3000) return;
-                        if (code === self.confirmCode) {
-                            self.confirmCount++;
-                        } else {
-                            self.confirmCode = code;
-                            self.confirmCount = 1;
-                        }
-                        if (self.confirmCount < 2) return;
                         self.lastCode = code;
                         self.lastTime = now;
-                        self.confirmCode = null;
-                        self.confirmCount = 0;
                         dotnetRef.invokeMethodAsync('OnCameraCodeScanned', code);
                     },
                     function () { }
                 ).catch(function (err) {
-                    var msg = 'No se pudo abrir la cámara.';
-                    if (err.toString().indexOf('NotAllowedError') >= 0) msg = 'Permiso de cámara denegado. Permite el acceso en tu navegador.';
-                    else if (err.toString().indexOf('NotFoundError') >= 0) msg = 'No se encontró una cámara en este dispositivo.';
-                    else if (err.toString().indexOf('insecure') >= 0 || err.toString().indexOf('secure') >= 0) msg = 'Cámara requiere HTTPS. Accede por https://' + location.hostname + ':5001';
-                    dotnetRef.invokeMethodAsync('OnCameraError', msg);
+                    self.handleError(err, dotnetRef);
                 });
             },
+
+            handleError: function (err, dotnetRef) {
+                var msg = 'No se pudo abrir la cámara.';
+                var errStr = err.toString();
+                if (errStr.indexOf('NotAllowedError') >= 0) msg = 'Permiso de cámara denegado. Permite el acceso en tu navegador.';
+                else if (errStr.indexOf('NotFoundError') >= 0) msg = 'No se encontró una cámara en este dispositivo.';
+                else if (errStr.indexOf('insecure') >= 0 || errStr.indexOf('secure') >= 0) msg = 'Cámara requiere HTTPS. Accede por https://' + location.hostname + ':5001';
+                dotnetRef.invokeMethodAsync('OnCameraError', msg);
+            },
+
             stop: function () {
-                if (this.scanner) {
-                    try { this.scanner.stop(); } catch (e) { }
-                    try { this.scanner.clear(); } catch (e) { }
-                    this.scanner = null;
+                if (this.animFrameId) {
+                    cancelAnimationFrame(this.animFrameId);
+                    this.animFrameId = null;
+                }
+                if (this.stream) {
+                    this.stream.getTracks().forEach(function (t) { t.stop(); });
+                    this.stream = null;
+                }
+                this.nativeDetector = null;
+                if (this.html5Scanner) {
+                    try { this.html5Scanner.stop(); } catch (e) { }
+                    try { this.html5Scanner.clear(); } catch (e) { }
+                    this.html5Scanner = null;
                 }
             }
         };
